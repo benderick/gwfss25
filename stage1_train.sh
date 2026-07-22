@@ -1,4 +1,4 @@
-export DETECTRON2_DATASETS=data_root
+export DETECTRON2_DATASETS=/icislab/volume3/benderick/futurama/gwfss25
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 python3 -W ignore train_net.py \

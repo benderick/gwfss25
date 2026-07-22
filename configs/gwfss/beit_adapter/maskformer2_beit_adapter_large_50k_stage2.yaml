@@ -2,7 +2,7 @@ _BASE_: ../maskformer2_R50_bs16_90k.yaml
 MODEL:
   BACKBONE:
     NAME: "BEiTAdapterLargeBackbone"
-  WEIGHTS: "beitv2_large_patch16_224_pt1k_ft1k_stage2.pkl"
+  WEIGHTS: "weights/beitv2_large_patch16_224_pt1k_ft1k_stage2.pkl"
   SWIN:
     EMBED_DIM: 128
     DEPTHS: [2, 2, 18, 2]

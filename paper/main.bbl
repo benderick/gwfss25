@@ -1,0 +1,103 @@
+\begin{thebibliography}{19}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Akyon et~al.(2022)Akyon, Altinuc, and Temizel]{akyon2022slicing}
+Fatih~Cagatay Akyon, Sinan~Onur Altinuc, and Alptekin Temizel.
+\newblock Slicing aided hyper inference and fine-tuning for small object detection.
+\newblock In \emph{Proceedings of IEEE International Conference on Image Processing}, pages 966--970. IEEE, 2022.
+
+\bibitem[Berrada et~al.(2024)Berrada, Couprie, Alahari, and Verbeek]{berrada2024guided}
+Tariq Berrada, Camille Couprie, Karteek Alahari, and Jakob Verbeek.
+\newblock Guided distillation for semi-supervised instance segmentation.
+\newblock In \emph{Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision}, pages 475--483, 2024.
+
+\bibitem[Chen et~al.(2023)Chen, Duan, Wang, He, Lu, Dai, and Qiao]{chen2022vision}
+Zhe Chen, Yuchen Duan, Wenhai Wang, Junjun He, Tong Lu, Jifeng Dai, and Yu Qiao.
+\newblock Vision transformer adapter for dense predictions.
+\newblock In \emph{Int. Conf. Learn. Represent.}, 2023.
+
+\bibitem[Cheng et~al.(2022)Cheng, Misra, Schwing, Kirillov, and Girdhar]{cheng2022masked}
+Bowen Cheng, Ishan Misra, Alexander~G Schwing, Alexander Kirillov, and Rohit Girdhar.
+\newblock Masked-attention mask transformer for universal image segmentation.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pages 1290--1299, 2022.
+
+\bibitem[David et~al.(2020)David, Madec, Sadeghi-Tehran, Aasen, Zheng, Liu, Kirchgessner, Ishikawa, Nagasawa, Badhon, et~al.]{david2020global}
+Etienne David, Simon Madec, Pouria Sadeghi-Tehran, Helge Aasen, Bangyou Zheng, Shouyang Liu, Norbert Kirchgessner, Goro Ishikawa, Koichi Nagasawa, Minhajul~A Badhon, et~al.
+\newblock Global wheat head detection (gwhd) dataset: A large and diverse dataset of high-resolution rgb-labelled images to develop and benchmark wheat head detection methods.
+\newblock \emph{Plant Phenomics}, 2020.
+
+\bibitem[Dosovitskiy et~al.(2021)Dosovitskiy, Beyer, Kolesnikov, Weissenborn, Zhai, Unterthiner, Dehghani, Minderer, Heigold, Gelly, et~al.]{dosovitskiy2021image}
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et~al.
+\newblock An image is worth 16x16 words: Transformers for image recognition at scale.
+\newblock In \emph{Int. Conf. Learn. Represent.}, 2021.
+
+\bibitem[He et~al.(2022)He, Chen, Xie, Li, Doll{\'a}r, and Girshick]{he2022masked}
+Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Doll{\'a}r, and Ross Girshick.
+\newblock Masked autoencoders are scalable vision learners.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pages 16000--16009, 2022.
+
+\bibitem[Kirillov et~al.(2020)Kirillov, Wu, He, and Girshick]{kirillov2020pointrend}
+Alexander Kirillov, Yuxin Wu, Kaiming He, and Ross Girshick.
+\newblock {PointRend}: Image segmentation as rendering.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pages 9799--9808, 2020.
+
+\bibitem[Liu et~al.(2023)Liu, Lu, Fu, and Cao]{liu2023learning}
+Wenze Liu, Hao Lu, Hongtao Fu, and Zhiguo Cao.
+\newblock Learning to upsample by learning to sample.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on Computer Vision}, pages 6027--6037, 2023.
+
+\bibitem[Lu et~al.(2019)Lu, Dai, Shen, and Xu]{lu2019indices}
+Hao Lu, Yutong Dai, Chunhua Shen, and Songcen Xu.
+\newblock Indices matter: Learning to index for deep image matting.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on Computer Vision}, pages 3266--3275, 2019.
+
+\bibitem[Lu et~al.(2022{\natexlab{a}})Lu, Dai, Shen, and Xu]{lu2022index}
+Hao Lu, Yutong Dai, Chunhua Shen, and Songcen Xu.
+\newblock Index networks.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, 44\penalty0 (1):\penalty0 242--255, 2022{\natexlab{a}}.
+
+\bibitem[Lu et~al.(2022{\natexlab{b}})Lu, Liu, Fu, and Cao]{lu2022fade}
+Hao Lu, Wenze Liu, Hongtao Fu, and Zhiguo Cao.
+\newblock Fade: Fusing the assets of decoder and encoder for task-agnostic upsampling.
+\newblock In \emph{European Conference on Computer Vision}, pages 231--247, 2022{\natexlab{b}}.
+
+\bibitem[Lu et~al.(2022{\natexlab{c}})Lu, Liu, Ye, Fu, Liu, and Cao]{lu2022sapa}
+Hao Lu, Wenze Liu, Zixuan Ye, Hongtao Fu, Yuliang Liu, and Zhiguo Cao.
+\newblock Sapa: Similarity-aware point affiliation for feature upsampling.
+\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)}, pages 20889--20901, 2022{\natexlab{c}}.
+
+\bibitem[Lu et~al.(2025)Lu, Liu, Fu, and Cao]{lu2025fade}
+Hao Lu, Wenze Liu, Hongtao Fu, and Zhiguo Cao.
+\newblock Fade: A task-agnostic upsampling operator for encoder--decoder architectures.
+\newblock \emph{International Journal of Computer Vision}, 133\penalty0 (1):\penalty0 151--172, 2025.
+
+\bibitem[Oquab et~al.(2023)Oquab, Darcet, Moutakanni, Vo, Szafraniec, Khalidov, Fernandez, Haziza, Massa, El-Nouby, et~al.]{oquab2023dinov2}
+Maxime Oquab, Timoth{\'e}e Darcet, Th{\'e}o Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et~al.
+\newblock {DINOv2}: Learning robust visual features without supervision.
+\newblock \emph{arXiv preprint arXiv:2304.07193}, 2023.
+
+\bibitem[Tarvainen and Valpola(2017)]{tarvainen2017mean}
+Antti Tarvainen and Harri Valpola.
+\newblock Mean teachers are better role models: Weight-averaged consistency targets improve semi-supervised deep learning results.
+\newblock \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 30, 2017.
+
+\bibitem[Tenenbaum and Freeman(2000)]{tenenbaum2000separating}
+Joshua~B Tenenbaum and William~T Freeman.
+\newblock Separating style and content with bilinear models.
+\newblock \emph{Neural Computation}, 12\penalty0 (6):\penalty0 1247--1283, 2000.
+
+\bibitem[Xia et~al.(2022)Xia, Pan, Song, Li, and Huang]{xia2022vision}
+Zhuofan Xia, Xuran Pan, Shiji Song, Li~Erran Li, and Gao Huang.
+\newblock Vision transformer with deformable attention.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pages 4794--4803, 2022.
+
+\bibitem[Yan et~al.(2025)Yan, Feng, Zhang, Pang, Shi, Wu, Dong, Sun, and Zhang]{yan2025hvi}
+Qingsen Yan, Yixu Feng, Cheng Zhang, Guansong Pang, Kangbiao Shi, Peng Wu, Wei Dong, Jinqiu Sun, and Yanning Zhang.
+\newblock {HVI}: A new color space for low-light image enhancement.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pages 5678--5687, 2025.
+
+\end{thebibliography}

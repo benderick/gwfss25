@@ -1,0 +1,68 @@
+% ICCV 2025 Paper Template
+
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+%%%%%%%%% PAPER TYPE  - PLEASE UPDATE FOR FINAL VERSION
+% \usepackage{iccv}              % To produce the CAMERA-READY version
+\usepackage[final]{iccv}      % To produce the REVIEW version
+% \usepackage[pagenumbers]{iccv} % To force page numbers, e.g. for an arXiv version
+\usepackage{amsthm}  
+\usepackage{placeins}
+\newtheorem{remark}{Remark}
+\usepackage{pifont}
+\usepackage{multirow}
+\usepackage{soul}
+% Import additional packages in the preamble file, before hyperref
+\input{preamble}
+
+% It is strongly recommended to use hyperref, especially for the review version.
+% hyperref with option pagebackref eases the reviewers' job.
+% Please disable hyperref *only* if you encounter grave issues, 
+% e.g. with the file validation for the camera-ready version.
+%
+% If you comment hyperref and then uncomment it, you should delete *.aux before re-running LaTeX.
+% (Or just hit 'q' on the first LaTeX run, let it finish, and you should be clear).
+\definecolor{iccvblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=iccvblue]{hyperref}
+
+%%%%%%%%% PAPER ID  - PLEASE UPDATE
+\def\paperID{006} % *** Enter the Paper ID here
+\def\confName{ICCV}
+\def\confYear{2025}
+
+%%%%%%%%% TITLE - PLEASE UPDATE
+\title{First Place Solution to the MLCAS 2025 GWFSS Challenge:\\
+The Devil is in the Detail and Minority}
+
+%%%%%%%%% AUTHORS - PLEASE UPDATE
+\author{
+Songliang~Cao \quad Tianqi~Hu \quad Hao~Lu\thanks{corresponding author}\\
+National Key Laboratory of Multispectral Information Intelligent Processing Technology \\
+School of Artificial Intelligence and Automation\\
+Huazhong University of Science and Technology, China\\
+% Institution1 address\\
+{\tt\small songliangcao@126.com hlu@hust.edu.cn}
+}
+% For a paper whose authors are all at the same institution,
+% omit the following lines up until the closing ``}''.
+% Additional authors and addresses can be added with ``\and'',
+% just like the second author.
+% To save space, use either the email address or home page, not both
+
+\begin{document}
+\maketitle
+\input{sec/0_abstract}    
+\input{sec/1_intro}
+\input{sec/2_dataset}
+\input{sec/3_method}
+\input{sec/4_results}
+\input{sec/5_conclusion}
+\input{sec/6_acknowledgement}
+{
+    \small
+    \bibliographystyle{ieeenat_fullname}
+    \bibliography{main}
+}
+
+
+\end{document}

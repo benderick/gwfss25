@@ -319,4 +319,4 @@ if __name__.endswith(".builtin"):
     register_all_ade20k(_root)
     register_all_gwfss(_root)
     # register_all_gwfss_semantic(_root)
-    register_all_gwfss_unlabel(_root)
+    # register_all_gwfss_unlabel(_root)

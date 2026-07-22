@@ -1,0 +1,4 @@
+\section{Conclusion}
+This report presents our first place solution to the MLCAS 2025 GWFSS Challenge. Due to the significant illumination variations, we resort to the HVI color space for ease of analysis of segmentation results. 
+Our approach is based on three insights observed from our baseline. By integrating the SAPA dynamic upsampling module into the ViT-Adapter, the ability of the model to capture fine details and tackle object boundaries is enhanced. Through guided distillation, we effectively leverage the unlabeled data, leading to improved model performance and enhanced robustness. Finally, through the strategy of \textit{zoom in and segment twice}, we further improve the performance of the model during the test time. % The results demonstrate that, while our three improvements seem simple, it can help train a robust model. 
+We hope our solution can provide insights to future studies, especially on how to identify the bottleneck of the problem.
