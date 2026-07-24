@@ -1,0 +1,15 @@
+Dear Editors:
+
+We submit our manuscript, titled "MSO-Det: A Multi-Level Synergistic Optimization Framework for Robust Spike Object Detection in Field Scenes," for consideration in your journal. This work is entirely original and is not published, accepted, or under review elsewhere.
+
+We propose MSO-Det, a multi-level synergistic optimization framework for robust spike/panicle object detection in complex agricultural scenes with large density variation, frequent occlusion, and substantial domain shift. Beyond improving benchmark performance, the main contribution of this study is to show that robust spike detection should be optimized jointly at the representation, feature-interaction, and supervision levels rather than by isolated module replacement. Experiments support this claim by achieving 32.2% AP on the challenging 18 Out-of-Domain splits of GWHD, a 10.0 percentage point gain over the baseline, together with strong zero-shot cross-crop transfer on the DRPD rice dataset.
+
+The main contributions of this study are summarized as follows:
+(1) We formulate robust field spike detection as a coupled problem of density adaptation, cross-domain semantic interaction, and uncertainty-aware localization, and we address it with the unified MSO-Det framework.
+(2) We propose ASWB and MSIA to improve robustness at the feature encoding and multi-scale fusion levels: ASWB performs scene-adaptive frequency-domain propagation, while MSIA uses hypergraph-based semantic aggregation to connect structurally similar patterns across scales and domains.
+(3) We develop UGDR to estimate localization uncertainty from corner distributions and apply curriculum-guided weighting, improving boundary refinement without introducing additional inference-time parameters.
+
+Thank you for considering our manuscript.
+
+Best regards,
+Weikuan Jia

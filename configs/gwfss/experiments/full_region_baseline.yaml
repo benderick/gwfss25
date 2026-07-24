@@ -1,0 +1,5 @@
+_BASE_: competition_baseline.yaml
+
+DATASETS:
+  TRAIN: ("gwfss_full_region_train",)
+  TEST: ("gwfss_full_region_val",)

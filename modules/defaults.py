@@ -415,6 +415,13 @@ class DefaultTrainer(TrainerBase):
                 model, data_loader, data_loader_unl, optimizer
             )
 
+        if cfg.SSL.TRAIN_SSL and cfg.SSL.EVAL_WHO == "TEACHER":
+            self.eval_model = self._trainer.ensemble_model.modelTeacher
+        elif cfg.SSL.TRAIN_SSL:
+            self.eval_model = self._trainer.ensemble_model.modelStudent
+        else:
+            self.eval_model = model
+
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         
         if cfg.SSL.TRAIN_SSL:
@@ -561,13 +568,9 @@ class DefaultTrainer(TrainerBase):
                                                   period=cfg.SOLVER.CHECKPOINT_PERIOD, 
                                                   max_iter=cfg.SOLVER.MAX_ITER,
                                                   max_to_keep=3))
-            ret.append(hooks.BestCheckpointer(checkpointer=self.checkpointer, 
-                                              eval_period=cfg.TEST.EVAL_PERIOD, 
-                                              val_metric="sem_seg/mIoU", 
-                                              mode="max"))
 
         def test_and_save_results():
-            self._last_eval_results = self.test(self.cfg, self.model)
+            self._last_eval_results = self.test(self.cfg, self.eval_model)
             results = self._last_eval_results
             
             if 'segm' in results.keys():
@@ -583,6 +586,15 @@ class DefaultTrainer(TrainerBase):
         # Do evaluation after checkpointer, because then if it fails,
         # we can use the saved checkpoint to debug.
         ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results))
+        if comm.is_main_process():
+            ret.append(
+                hooks.BestCheckpointer(
+                    checkpointer=self.checkpointer,
+                    eval_period=cfg.TEST.EVAL_PERIOD,
+                    val_metric="sem_seg/mIoU",
+                    mode="max",
+                )
+            )
 
         if comm.is_main_process():
             # Here the default print/log frequency of each writer is used.
@@ -924,13 +936,10 @@ def inference_on_dataset(
 
             if save:
                 img = cv2.imread(inputs[0]['file_name'])
-                gt_path = inputs[0]['file_name'].replace('images', 'vis').split('.')[0] + '.png'
-                gt = cv2.imread(gt_path)
                 v = Visualizer(img[:,:,::-1], metadata=MetadataCatalog.get("gwfss_sem_seg_test"))
                 pred = torch.argmax(outputs[0]['sem_seg'], dim=0).cpu().numpy()
                 v = v.draw_sem_seg(pred, alpha=0.5)
                 v = v.get_image()[:, :, ::-1]
-                # save_img = np.hstack([img, gt, v])
                 cv2.imwrite(os.path.join(evaluator._output_dir, 'vis', os.path.basename(inputs[0]['file_name'])), v)
 
                 df = pd.DataFrame(pred)

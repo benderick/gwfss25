@@ -1,0 +1,29 @@
+_BASE_: ../beit_adapter/maskformer2_beit_adapter_large_50k_stage2.yaml
+
+MODEL:
+  SEM_SEG_HEAD:
+    UPSAMPLE_MODE: "sapa"
+
+DATASETS:
+  TRAIN: ("gwfss_sem_seg_train",)
+  TEST: ("gwfss_sem_seg_val",)
+
+SOLVER:
+  IMS_PER_BATCH: 2
+  MAX_ITER: 90000
+  CHECKPOINT_PERIOD: 5000
+
+SSL:
+  TRAIN_SSL: True
+  # Selected by the winning method using predicted stem-pixel proportion.
+  UNLABELED_DATASET: "gwfss_unlabel_stem4500"
+  BURNIN_ITER: 20000
+  EMA_DECAY: 0.9996
+  EVAL_WHO: "TEACHER"
+
+TEST:
+  EVAL_PERIOD: 5000
+  AUG:
+    ENABLED: False
+
+SEED: 2025

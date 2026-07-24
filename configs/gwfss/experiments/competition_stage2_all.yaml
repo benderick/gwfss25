@@ -1,0 +1,4 @@
+_BASE_: competition_stage2_stem4500.yaml
+
+SSL:
+  UNLABELED_DATASET: "gwfss_unlabel_all"

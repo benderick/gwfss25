@@ -21,3 +21,4 @@ def add_ssl_config(cfg):
     _C.SSL.CKPT_TARGET = 'TEACHER'
     _C.SSL.EVAL_WHO = "STUDENT"
     _C.SSL.WEIGHTS = ""
+    _C.SSL.UNLABELED_DATASET = "gwfss_unlabel_stem4500"

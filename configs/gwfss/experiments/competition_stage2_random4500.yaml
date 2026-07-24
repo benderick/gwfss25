@@ -1,0 +1,5 @@
+_BASE_: competition_stage2_stem4500.yaml
+
+SSL:
+  # Deterministic domain-balanced control: 500 images per source domain.
+  UNLABELED_DATASET: "gwfss_unlabel_random4500_seed2025"

@@ -4,7 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import json
+import hashlib
 import logging
 import os
 
@@ -20,63 +20,109 @@ This file contains functions to register the Cityscapes panoptic dataset to the 
 logger = logging.getLogger(__name__)
 
 
-def get_gwfss_unlabel_files(image_dir, gt_dir):
-    files = []
-    image_dict = {}
-    # for city in cities:
-    for basename in PathManager.ls(image_dir):
-        image_file = os.path.join(image_dir, basename)
-
-        # suffix = ".png"
-        # assert basename.endswith(suffix), basename
-        basename = os.path.basename(basename)[: -4]
-
-        image_dict[basename] = image_file
-
-    # for ann in json_info["images"]:
-    #     image_file = image_dict.get(ann["id"], None)
-    #     files.append((image_file,)) # '', {'s':[]}))
-    for image_file in image_dict.values():
-        files.append((image_file,))  # '', {'s':[]}))
-
-    assert len(files), "No images found in {}".format(image_dir)
-    assert PathManager.isfile(files[0][0]), files[0][0]
-    return files
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
-def load_gwfss_unlabel(image_dir, gt_dir, gt_json, meta):
+def _normalise_manifest_path(path):
+    # The released list replaces spaces around the dash in "Uliege - CRA-W".
+    return path.replace("_-_", " - ")
+
+
+def _select_domain_balanced(
+    image_files,
+    image_dir,
+    samples_per_domain,
+    seed,
+):
+    files_by_domain = {}
+    for image_file in image_files:
+        domain = os.path.basename(os.path.dirname(image_file))
+        files_by_domain.setdefault(domain, []).append(image_file)
+
+    selected = []
+    for domain in sorted(files_by_domain):
+        domain_files = files_by_domain[domain]
+        if len(domain_files) < samples_per_domain:
+            raise ValueError(
+                "{} contains only {} images; {} requested".format(
+                    domain, len(domain_files), samples_per_domain
+                )
+            )
+        ranked = sorted(
+            domain_files,
+            key=lambda path: hashlib.sha256(
+                "{}:{}".format(seed, os.path.relpath(path, image_dir)).encode("utf-8")
+            ).digest(),
+        )
+        selected.extend(ranked[:samples_per_domain])
+    return selected
+
+
+def get_gwfss_unlabel_files(
+    image_dir,
+    manifest_file=None,
+    samples_per_domain=None,
+    seed=0,
+):
+    if manifest_file:
+        with PathManager.open(manifest_file, "r") as handle:
+            relative_paths = [
+                _normalise_manifest_path(line.strip())
+                for line in handle
+                if line.strip()
+            ]
+        image_files = [os.path.join(image_dir, path) for path in relative_paths]
+    else:
+        image_files = []
+        for current_dir, _, basenames in os.walk(image_dir):
+            for basename in basenames:
+                if os.path.splitext(basename)[1].lower() in _IMAGE_EXTENSIONS:
+                    image_files.append(os.path.join(current_dir, basename))
+        image_files.sort()
+        if samples_per_domain is not None:
+            image_files = _select_domain_balanced(
+                image_files,
+                image_dir,
+                samples_per_domain,
+                seed,
+            )
+
+    assert image_files, "No images found in {}".format(image_dir)
+    missing = [path for path in image_files if not PathManager.isfile(path)]
+    assert not missing, "Missing unlabeled image: {}".format(missing[0])
+    return [(path,) for path in image_files]
+
+
+def load_gwfss_unlabel(
+    image_dir,
+    manifest_file=None,
+    samples_per_domain=None,
+    seed=0,
+):
     """
     Args:
         image_dir (str): path to the raw dataset. e.g., "~/cityscapes/leftImg8bit/train".
-        gt_dir (str): path to the raw annotations. e.g.,
-            "~/cityscapes/gtFine/cityscapes_panoptic_train".
-        gt_json (str): path to the json file. e.g.,
-            "~/cityscapes/gtFine/cityscapes_panoptic_train.json".
-        meta (dict): dictionary containing "thing_dataset_id_to_contiguous_id"
-            and "stuff_dataset_id_to_contiguous_id" to map category ids to
-            contiguous ids for training.
+        manifest_file (str, optional): file containing paths relative to
+            ``image_dir``. If omitted, all images below ``image_dir`` are used.
 
     Returns:
         list[dict]: a list of dicts in Detectron2 standard format. (See
         `Using Custom Datasets </tutorials/datasets.html>`_ )
     """
 
-    # print('Looking for json ground truth', gt_json)
-    # assert os.path.exists(
-    #     gt_json
-    # ), "Please run `python cityscapesscripts/preparation/createPanopticImgs.py` to generate label files (unlabel)."  # noqa
-    # with open(gt_json) as f:
-    #     json_info = json.load(f)
-    files = get_gwfss_unlabel_files(image_dir, gt_dir)
+    files = get_gwfss_unlabel_files(
+        image_dir,
+        manifest_file,
+        samples_per_domain,
+        seed,
+    )
     ret = []
     for image_file, in files:
-    
+        relative_stem = os.path.splitext(os.path.relpath(image_file, image_dir))[0]
         ret.append(
             {
                 "file_name": image_file,
-                "image_id": "_".join(
-                    os.path.splitext(os.path.basename(image_file))[0]
-                ),
+                "image_id": relative_stem.replace(os.sep, "__"),
                 # "sem_seg_file_name": '',
                 # "pan_seg_file_name": '',
                 # "segments_info": {'s':[]},
@@ -86,12 +132,19 @@ def load_gwfss_unlabel(image_dir, gt_dir, gt_json, meta):
     return ret
 
 
-_RAW_GWFSS_SEMANTIC_SPLITS = {
-    f"gwfss_unlabel_train": (
-        "GWFSS/pretrain_4500/images",
-        "None",
-        f"None",
+_RAW_GWFSS_UNLABELED_SPLITS = {
+    "gwfss_unlabel_stem4500": ("GWFSS", "unlabeled_4500.txt", None, 0),
+    "gwfss_unlabel_random4500_seed2025": (
+        "GWFSS/gwfss_competition_pretrain", None, 500, 2025,
     ),
+    "gwfss_unlabel_all": (
+        "GWFSS/gwfss_competition_pretrain", None, None, 0,
+    ),
+    # Compatibility alias. This is the prior method's stem-aware selection,
+    # not a neutral 4,500-image subset.
+    "gwfss_unlabel_4500": ("GWFSS", "unlabeled_4500.txt", None, 0),
+    # Compatibility alias used by the released training code.
+    "gwfss_unlabel_train": ("GWFSS", "unlabeled_4500.txt", None, 0),
 }
 
 
@@ -138,19 +191,23 @@ def register_all_gwfss_unlabel(root):
     meta["thing_dataset_id_to_contiguous_id"] = thing_dataset_id_to_contiguous_id
     meta["stuff_dataset_id_to_contiguous_id"] = stuff_dataset_id_to_contiguous_id
 
-    for key, (image_dir, gt_dir, gt_json) in _RAW_GWFSS_SEMANTIC_SPLITS.items():
+    for key, (
+        image_dir,
+        manifest_file,
+        samples_per_domain,
+        seed,
+    ) in _RAW_GWFSS_UNLABELED_SPLITS.items():
         image_dir = os.path.join(root, image_dir)
-        gt_dir = os.path.join(root, gt_dir)
-        gt_json = os.path.join(root, gt_json)
+        if manifest_file:
+            manifest_file = os.path.join(root, manifest_file)
 
         DatasetCatalog.register(
-            key, lambda x=image_dir, y=gt_dir, z=gt_json: load_gwfss_unlabel(x, y, z, meta)
+            key,
+            lambda x=image_dir, y=manifest_file, n=samples_per_domain, s=seed:
+                load_gwfss_unlabel(x, y, n, s),
         )
         MetadataCatalog.get(key).set(
-            panoptic_root=gt_dir,
             image_root=image_dir,
-            panoptic_json=gt_json,
-            gt_dir=gt_dir,
             evaluator_type="sem_seg",
             ignore_label=255,
             label_divisor=1000,

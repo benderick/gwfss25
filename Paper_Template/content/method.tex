@@ -1,0 +1,214 @@
+\section{方法}
+\label{sec:method}
+
+\subsection{问题定义}
+
+设有标注数据集为
+\begin{equation}
+\mathcal D_l=\{(x_i^l,y_i^l,d_i)\}_{i=1}^{N_l},
+\end{equation}
+其中 $x_i^l\in\mathbb R^{3\times H\times W}$ 表示田间 RGB 图像，$y_i^l\in\{0,\ldots,C-1\}^{H\times W}$ 表示像素级标注，$d_i\in\{1,\ldots,D\}$ 表示采集域。无标注数据集记为
+\begin{equation}
+\mathcal D_u=\{(x_j^u,d_j)\}_{j=1}^{N_u}.
+\end{equation}
+本文考虑背景、麦穗、茎秆和叶片四个类别，即 $C=4$。训练阶段只使用 $D$ 个源域中的有标注和无标注图像，测试阶段模型需要直接泛化到未参与训练的目标域 $d^\star$。
+
+本文采用由 Mean Teacher 发展而来的教师--学生框架 \citep{tarvainen2017mean}。学生网络 $f_{\theta_s}$ 接收强扰动图像并通过梯度下降更新，教师网络 $f_{\theta_t}$ 接收弱扰动图像并产生伪标签。教师参数通过学生参数的指数滑动平均更新：
+\begin{equation}
+\theta_t\leftarrow\alpha\theta_t+(1-\alpha)\theta_s,
+\label{eq:ema}
+\end{equation}
+其中 $\alpha$ 为动量系数。基础分割器沿用项目中的 BEiTv2-Large、ViT-Adapter 和 Mask2Former 组合 \citep{peng2022beitv2,chen2023vitadapter,cheng2022mask2former,cao2025detailminority}。ViT-Adapter 输出四级特征，Mask2Former 使用多尺度像素解码器和掩码查询得到类别概率及掩码概率。本文的结构监督和原型学习均作用于由查询预测组合得到的可微语义概率图。
+
+\subsection{总体框架}
+
+\begin{figure*}[!htbp]
+\centering
+%\includegraphics[width=0.96\linewidth]{figures/framework.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.35cm}
+\placeholder{总体框架参考图提示词：绘制横向科研流程图，用虚线竖隔板分为训练输入、可靠结构学习、跨域表示学习和推理精细化四个区域。左侧上支路为带标签 RGB、四类真值和监督损失，下支路为按采集域分组的无标签 RGB；两支路进入共享的 BEiTv2-L、ViT-Adapter、Mask2Former。中部画 EMA 教师接收弱增强、学生接收强增强，教师的多尺度预测进入 TRPL，并输出三种有固定颜色图例的掩码：绿色可靠区域、红色一像素中心线、灰色忽略边界。用实线箭头把可靠区域送往伪监督损失，用另一条箭头把拓扑核心送往 TCPM；TCPM 内画多个域级类别原型、聚合后的全局原型、被临时留出的模拟未知域，以及同类吸引/异类排斥箭头。右侧单独标“仅推理”，展示一次全局预测生成熵图、端点图、内部尺度差异图，经加权评分和 NMS 选出 Top-K 窗口，局部放大后与全局结果门控融合。训练路径用蓝色箭头，推理路径用橙色箭头，EMA 更新用虚线箭头；标出各模块对应损失和 1+K 次前向计算，避免画成三个互不相连的模块。}
+\vspace{1.35cm}}}
+\caption{\METHOD 总体框架。训练阶段由 \TRPL 和 \TCPM 共同提高无标注监督的结构可靠性与跨域稳定性；推理阶段由 \BAZR 对预测中可能发生结构失效的少量区域进行高分辨率细化。}
+\label{fig:framework}
+\end{figure*}
+
+\Cref{fig:framework} 展示了拓扑可靠性在训练与推理之间的传递关系。无标注图像经过教师的多尺度预测后，\TRPL 将茎秆伪标签分成可靠区域、稳定中心线和不确定边界。稳定中心线既参与学生的结构监督，也与其他器官的高置信内部区域共同构成 \TCPM 的原型更新样本。模型部署时不再维护教师和原型记忆，\BAZR 只从一次全局前向得到的熵、异常骨架端点和内部尺度差异中判断结构失效风险，将后续计算集中到少量窗口。
+
+\subsection{拓扑可靠伪标签学习}
+\label{sec:trpl}
+
+\TRPL 借鉴弱到强一致性学习利用教师预测监督强扰动视图的基本形式 \citep{yang2023unimatch}，也保留了 U2PL 和 ST++ 所强调的伪标签可靠性控制 \citep{wang2022u2pl,yang2022stpp}。这些方法把可靠性定义在像素、区域或整幅图像层面，置信度不足的茎秆像素通常被统一丢弃。对小麦图像而言，低置信度并不总意味着器官位置错误：由混合像素和下采样引起的不确定性往往集中在茎秆两侧，而中心位置在不同视图中仍然稳定。soft-clDice 提供了可微的中心线一致性约束 \citep{shit2021cldice}，但它假设监督掩码本身具有可信拓扑，直接用于噪声伪标签可能把偶然误连固化下来。\TRPL 的改动在于先通过多视图一致性确定可见中心线是否可信，再分别处理中心线、区域和边界，而不是对整张伪掩码使用同一阈值或同一拓扑约束。
+
+\subsubsection{多视图不确定性估计}
+
+固定类别阈值不能准确描述细长器官的可靠性。为得到同时包含概率不确定性和结构稳定性的评价，本文对无标注图像 $x^u$ 构造 $M$ 个弱视图。第 $m$ 个视图包含尺度变换和保持几何可逆的弱扰动，其对齐到原图坐标的教师预测为
+\begin{equation}
+P_m=\mathcal T_m^{-1}
+\left(f_{\theta_t}(\mathcal T_m(x^u))\right).
+\end{equation}
+多视图平均预测 $\bar P=M^{-1}\sum_{m=1}^{M}P_m$ 用于生成类别伪标签。像素 $p$ 的不确定性定义为
+\begin{equation}
+U(p)=
+\frac{H(\bar P(p))}{\log C}
++\frac{\beta}{M}\sum_{m=1}^{M}
+\operatorname{JS}\!\left(P_m(p)\,\|\,\bar P(p)\right),
+\label{eq:uncertainty}
+\end{equation}
+其中 $H(\cdot)$ 为熵，$\operatorname{JS}(\cdot)$ 为 Jensen--Shannon 散度，$\beta$ 控制尺度与扰动不一致性的贡献。由此得到连续置信权重
+\begin{equation}
+w(p)=\exp\left(-U(p)/\tau_u\right).
+\label{eq:confidence}
+\end{equation}
+
+\subsubsection{中心线--区域解耦}
+
+对于背景、麦穗和叶片，本文根据类别自适应阈值 $\tau_c$ 从 $\bar P$ 中提取可靠区域。对于茎秆，直接使用相同操作容易在边界不确定时删除整个细小组件。为此，本文对每个视图的茎秆概率执行可微骨架化：
+\begin{equation}
+K_m=\mathcal S(P_m^{\mathrm{stem}}),
+\end{equation}
+并计算中心线持续性
+\begin{equation}
+A(p)=\frac{1}{M}\sum_{m=1}^{M}
+\mathbb I[K_m(p)>\tau_k].
+\end{equation}
+稳定中心线定义为 $K^+(p)=\mathbb I[A(p)\geq\rho]$。可靠茎秆区域 $R^+$ 由类别预测为茎秆且 $w(p)\geq\tau_{\mathrm{stem}}$ 的像素组成；预测为茎秆但未进入 $R^+$、且位于其邻域内的像素构成不确定边界 $B^{?}$。$B^{?}$ 不作为硬类别监督，而被写入忽略掩码。该表示保留了边界宽度不确定但中心位置稳定的茎秆监督。
+
+\begin{figure}[!htbp]
+\centering
+%\includegraphics[width=\linewidth]{figures/topology_pseudo_label.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
+\placeholder{TRPL 机理图参考提示词：采用从左到右的两层流程。上层输入同一小麦冠层图像的原尺度、缩小尺度和轻微颜色扰动视图，每个视图下方画教师茎秆概率图，并用反变换箭头对齐到原坐标；随后分别计算平均概率、归一化熵和 Jensen--Shannon 一致性，合成为不确定性热图，色条从蓝色低不确定到红色高不确定。下层把多个概率图做可微骨架化，叠加得到中心线持续性图；用清晰图例标出红色稳定中心线 K+、绿色可靠茎秆区域 R+、灰色不确定边界 B? 和黑色非茎秆。右侧安排放大的局部对照：普通固定阈值删除一段边界模糊但位置稳定的细茎，TRPL 保留中心线、监督可靠区域并忽略宽度不确定的边界。再放一个遮挡反例，显示方法只监督两段可见中心线，不跨叶片遮挡强行连接。用箭头标明区域损失接收 R+、拓扑损失接收 K+、B? 不反向传播硬标签。}
+\vspace{1.05cm}}}
+\caption{\TRPL 的中心线--区域解耦过程。蓝色占位图后续应同时给出正确保留与错误过滤案例。}
+\label{fig:trpl}
+\end{figure}
+
+\Cref{fig:trpl} 将概率不确定性和结构持续性的分工作了直观区分。学生的区域伪监督损失为
+\begin{equation}
+\mathcal L_{\mathrm{region}}=
+\frac{1}{|\Omega_r|}
+\sum_{p\in\Omega_r}w(p)
+\ell_{\mathrm{ce}}\!\left(P_s(p),\hat y(p)\right)
++\lambda_d\mathcal L_{\mathrm{dice}},
+\label{eq:regionloss}
+\end{equation}
+其中 $\Omega_r$ 排除了 $B^{?}$，$P_s$ 为学生预测。拓扑监督仅作用于多视图一致的可见结构：
+\begin{equation}
+\mathcal L_{\mathrm{topology}}
+=1-\operatorname{clDice}
+\left(\mathcal S(P_s^{\mathrm{stem}}),K^+\right)
++\lambda_c\mathcal L_{\mathrm{skel-cons}},
+\label{eq:topoloss}
+\end{equation}
+其中 $\mathcal L_{\mathrm{skel-cons}}$ 约束学生强扰动视图与教师弱扰动视图的骨架一致性。该设计不对两个可见端点之间执行形态学连线，因此不会将被叶片遮挡的区域强制标为茎秆。
+
+\subsection{拓扑核心原型记忆}
+\label{sec:tcpm}
+
+类别原型为跨域分割提供了紧凑的语义参照。ProDA 根据像素到类别原型的距离修正伪标签并压紧目标域特征 \citep{zhang2021proda}，Pin the Memory 则通过类别记忆和模拟元测试学习未知域中的共享概念 \citep{kim2022pinmemory}。两者启发了本文的原型约束和留一域训练，但直接从完整高置信区域求均值仍不适合小麦器官：叶片边缘、茎秆边缘和二者交叠位置恰好是域风格与分类噪声最强的区域，少量错误像素就可能显著移动像素占比很低的茎秆原型。本文因而不改变“以类别中心约束跨域表示”的基本思想，而是改变原型的证据来源，只允许结构上稳定的器官核心更新记忆。
+
+具体地，本文从像素解码器的高分辨率掩码特征中提取归一化表示 $z(p)$，并为每个类别 $c$ 和源域 $d$ 定义核心像素集合 $\Omega_{c,d}$。茎秆的核心集合由稳定中心线 $K^+$ 及其窄邻域组成；其余类别则使用经过边界收缩的高置信内部区域。这样的非对称定义反映了器官形态差异：大面积类别可以牺牲少量边界像素换取纯净内部特征，茎秆则需要保住窄结构的中心证据。
+
+类别--域原型通过动量更新：
+\begin{equation}
+q_{c,d}\leftarrow
+\mu q_{c,d}
++(1-\mu)
+\frac{\sum_{p\in\Omega_{c,d}}w(p)z(p)}
+{\sum_{p\in\Omega_{c,d}}w(p)}.
+\label{eq:domainprototype}
+\end{equation}
+全局类别原型定义为 $q_c=D^{-1}\sum_{d=1}^{D}q_{c,d}$。为使同一器官在不同采集条件下具有稳定表示，本文采用原型对比损失
+\begin{equation}
+\mathcal L_{\mathrm{con}}=
+-\frac{1}{|\Omega|}
+\sum_{p\in\Omega}
+\log
+\frac{\exp(\operatorname{sim}(z(p),q_{y_p})/\tau_p)}
+{\sum_{c'=1}^{C}
+\exp(\operatorname{sim}(z(p),q_{c'})/\tau_p)}
+\label{eq:contrastive}
+\end{equation}
+以及域原型紧致损失
+\begin{equation}
+\mathcal L_{\mathrm{dom}}=
+\frac{1}{CD}\sum_{c=1}^{C}\sum_{d=1}^{D}
+\|q_{c,d}-q_c\|_2^2.
+\label{eq:domaincompact}
+\end{equation}
+对于容易混淆的茎秆与叶片，训练批次额外增加二者之间的困难负样本，使茎秆核心更接近全局茎秆原型而远离叶片原型。
+
+训练时采用留一域模拟。每次从源域中选择一个域 $d_h$ 作为模拟未知域，其样本不参与当前全局原型更新，但需要依据其可靠像素预测全局类别原型。其余域用于构造原型记忆。不同迭代轮换 $d_h$，从而在不访问真实目标域的条件下显式模拟跨地域部署。
+
+\begin{figure}[!htbp]
+\centering
+%\includegraphics[width=\linewidth]{figures/topology_core_memory.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
+\placeholder{TCPM 机理图参考提示词：画成“像素选择--域级记忆--留一域验证”三栏。左栏并排展示四类预测掩码和高分辨率特征图，茎秆只从红色稳定中心线及窄邻域采样，麦穗与叶片从腐蚀后的内部区域采样，边界像素用灰叉明确排除；用小型特征向量图标表示带置信权重的核心像素。中栏按 Domain 1、Domain 2、Domain 3 排列每类原型 q(c,d)，同类原型使用相同颜色、不同域使用不同外框，箭头汇聚成全局原型 q(c)；画出动量更新符号，以及茎秆与叶片困难负样本之间的排斥箭头。右栏把一个域画成虚线框并标记 held-out domain，该域不更新记忆，其核心特征必须匹配由其余域形成的全局原型；展示同类跨域特征被拉近、异类特征被推远的前后对比散点。图底部画循环箭头表示每轮更换留出域，并明确“训练时使用源域标签或可靠伪标签，测试域始终不可见”。}
+\vspace{1.05cm}}}
+\caption{\TCPM 从器官核心而非完整预测区域更新类别--域原型，并通过轮换留一域模拟未知采集条件。}
+\label{fig:tcpm}
+\end{figure}
+
+\Cref{fig:tcpm} 中的两级记忆把域内特征聚合与域间约束分开：域级原型保留采集条件差异，全局原型只承担跨域共享的类别参照。这一结构使留出域上的匹配误差可以反向约束特征提取器，而不会把留出域本身写入当前记忆。
+
+\subsection{断裂感知选择性放大}
+\label{sec:bazr}
+
+选择性细化并非新的计算范式。PointRend 在不确定点上迭代预测以恢复清晰边界 \citep{kirillov2020pointrend}。Liu 等人的 SparseRefine 用预测熵筛选少量高分辨率像素 \citep{liu2024sparserefine}，HRDA 也说明局部高分辨率与全局上下文需要共同保留 \citep{hoyer2022hrda}。这些方法主要把高熵或边界视为细化依据；对于小麦茎秆，一段预测可以具有较高置信度却在低分辨率下发生断裂，普通叶片边缘又可能具有高熵但并不需要额外计算。项目原方案采用密集多尺度滑窗缓解这一问题 \citep{cao2025detailminority}，代价是所有位置都被重复处理。\BAZR 沿用“把高分辨率计算留给困难位置”的思想，但把路由单位从像素改为窗口，并把结构断裂而非单纯分类不确定性纳入选择标准。
+
+\BAZR 对完整图像执行一次全局推理，得到概率图 $P^g$。为避免在路由阶段再次运行完整多尺度模型，本文在像素解码器的高、低分辨率特征上设置轻量辅助预测头，并在同一次前向过程中得到 $P^{\mathrm{high}}_{\mathrm{aux}}$ 和 $P^{\mathrm{low}}_{\mathrm{aux}}$。
+
+将图像划分为候选窗口 $\{\mathcal W_k\}$。第 $k$ 个窗口的细化优先级为
+\begin{equation}
+r_k=
+a\,\overline U_k
++b\,E_k
++c\,D_k
++d\,\overline P^{g,\mathrm{stem}}_k,
+\label{eq:routingscore}
+\end{equation}
+其中 $\overline U_k$ 为全局预测的平均归一化熵，$E_k$ 为异常骨架端点密度，$D_k$ 为两个辅助预测头在茎秆类别上的平均差异，$\overline P^{g,\mathrm{stem}}_k$ 为平均茎秆概率。$E_k$ 使模型关注可能发生断裂的细长组件，$D_k$ 则反映网络内部不同空间尺度对该区域的判断分歧。
+
+本文使用非极大值抑制去除高度重叠窗口，并选择得分最高的 $K$ 个窗口。每个窗口从原始图像裁剪后放大至网络输入尺寸，复用同一分割器得到局部高分辨率预测 $P_k^z$。局部与全局预测通过轻量门控函数融合：
+\begin{equation}
+P^{\mathrm{final}}(p)=
+g_k(p)P_k^z(p)
++[1-g_k(p)]P^g(p),
+\quad p\in\mathcal W_k,
+\label{eq:fusion}
+\end{equation}
+窗口外保持 $P^{\mathrm{final}}=P^g$。门控函数在有标注源域和高可靠伪标签上训练，不使用目标域标签。最终推理仅需 $1+K$ 次分割器前向计算。
+
+\begin{figure*}[!htbp]
+\centering
+%\includegraphics[width=\linewidth]{figures/selective_zoom.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.0cm}
+\placeholder{BAZR 机理图参考提示词：以一张含细茎、叶片交叠和大面积背景的小麦图像为起点，顶部画单次全局前向，同时从主预测头、高分辨率辅助头和低分辨率辅助头输出结果。中间并排四张与原图严格对齐的热图：归一化熵 U、异常骨架端点密度 E、两个辅助头的茎秆差异 D、全局茎秆概率；在每张图上用相同候选网格，并展示四项得分按 a、b、c、d 加权得到窗口分数 r。随后画 NMS 去掉重叠候选，保留带编号的 Top-K 窗口；每个窗口从原始分辨率 RGB 裁剪、放大、进入共享分割器，局部预测通过空间门控 g 与全局预测融合。右侧给出断裂茎秆修复前后局部放大图，标出连接恢复但叶片边界未被误改。底部做计算路径对照：密集多尺度方案画覆盖全图的多尺度滑窗和约 160 次前向，BAZR 画一次全局加 K 次局部前向；同时展示一个“高熵但无结构风险”的叶片边界未被选中，以及一个“中等熵但端点异常”的断茎被选中的反事实案例。}
+\vspace{1.0cm}}}
+\caption{\BAZR 根据茎秆结构失效风险分配高分辨率计算，而非均匀处理整幅图像。}
+\label{fig:bazr}
+\end{figure*}
+
+\Cref{fig:bazr} 强调了熵与结构风险的差别。只有当窗口得分经过多源证据共同支持时，局部预测才会替换全局结果；门控融合则限制修正范围，避免高分辨率裁剪失去全局上下文后破坏已经正确的区域。
+
+\subsection{训练目标与优化过程}
+
+有标注数据使用 Mask2Former 的类别、掩码交叉熵和 Dice 损失，记为 $\mathcal L_{\mathrm{sup}}$。此外，对有标注茎秆应用同样的拓扑损失，以保证监督与半监督分支的目标一致。原型学习损失为
+\begin{equation}
+\mathcal L_{\mathrm{prototype}}
+=\mathcal L_{\mathrm{con}}
++\gamma\mathcal L_{\mathrm{dom}}.
+\end{equation}
+局部融合门控的监督记为 $\mathcal L_{\mathrm{route}}$。完整训练目标为
+\begin{equation}
+\mathcal L=
+\mathcal L_{\mathrm{sup}}
++\lambda_u\mathcal L_{\mathrm{region}}
++\lambda_t\mathcal L_{\mathrm{topology}}
++\lambda_p\mathcal L_{\mathrm{prototype}}
++\lambda_r\mathcal L_{\mathrm{route}}.
+\label{eq:total}
+\end{equation}
+
+训练由监督预热和半监督联合优化组成。监督预热只使用有标注图像，所得模型作为初始教师；进入联合优化后，学生分割头重新初始化，并同时接收有标注图像与按域均衡采样的无标注图像。前 \placeholder{burn-in 迭代数} 次迭代保持教师不变，随后将学生参数复制给教师并按\cref{eq:ema}持续更新。伪标签、域原型和留一域选择均在线更新，各项损失权重与训练日程见\cref{sec:implementation}。

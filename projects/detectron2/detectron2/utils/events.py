@@ -157,6 +157,11 @@ class TensorboardXWriter(EventWriter):
 
     @cached_property
     def _writer(self):
+        # Older torch releases access ``distutils.version`` without importing
+        # that submodule first. Newer setuptools distutils shims do not expose
+        # it until it is explicitly imported.
+        import distutils.version  # noqa: F401
+
         from torch.utils.tensorboard import SummaryWriter
 
         return SummaryWriter(**self._writer_args)

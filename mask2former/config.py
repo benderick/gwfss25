@@ -73,6 +73,9 @@ def add_maskformer2_config(cfg):
     cfg.MODEL.SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS = 0
     # pixel decoder
     cfg.MODEL.SEM_SEG_HEAD.PIXEL_DECODER_NAME = "BasePixelDecoder"
+    # The released GWFSS code replaces the final FPN upsampling with SAPA.
+    # Keep it configurable so the stock Mask2Former baseline remains runnable.
+    cfg.MODEL.SEM_SEG_HEAD.UPSAMPLE_MODE = "sapa"
 
     # swin transformer backbone
     cfg.MODEL.SWIN = CN()

@@ -1,0 +1,209 @@
+\section{实验}
+\label{sec:experiments}
+
+\subsection{数据集与评测协议}
+\label{sec:datasets}
+
+\paragraph{少标注跨域协议}
+GWFSS 竞赛发布的少标注协议包含来自 9 个源域的 99 张像素级标注训练图像、64,368 张无标注训练图像和 99 张验证图像，另有来自未见域的 110 张测试图像；所有图像均被裁剪为 $512\times512$ 像素。该协议同时考查无标注数据利用和未知采集域泛化。模型选择、超参数调整和消融实验只依据源域验证集完成，测试集仅用于最终评测，以避免目标域信息泄漏。除非特别说明，所有对比方法均使用相同的 99 张标注图像。
+
+\paragraph{完整数据区域协议}
+数据集论文给出的地域划分用于检验方法是否依赖特定少标注拆分。完整数据包含 1,096 张精细标注图像和 52,078 张无标注图像，覆盖 11 个研究机构、不同成像平台和约 $0.09$--$0.71$ mm/pixel 的地面采样距离 \citep{wang2025gwfss}。训练域来自 Arvalis、CIMMYT、ETHZ、INRAE、NJAU、RRES 和 ULiege，UTokyo 作为验证域，UQ 作为测试域。本文保持官方划分不变，并报告使用全部训练标注以及 \placeholder{例如 10\%、25\%、50\%} 标注比例时的结果。不同标注比例由固定随机种子采样，并在所有方法间共享。\Cref{fig:dataset} 选取的样本需要覆盖域差异来源，而不是只展示视觉效果较好的图像。
+
+\begin{figure}[!htbp]
+\centering
+%\includegraphics[width=\linewidth]{figures/dataset_domains.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
+\placeholder{数据域示例图参考提示词：制作 4 列乘 3 行的科研图版，四列分别选取近距离高分辨率、远距离低分辨率、强阴影绿色冠层和衰老黄色冠层等代表域；第一行为原始 RGB，第二行为四类语义标注，第三行为仅保留茎秆掩码及其一像素骨架。使用固定类别颜色：背景黑、麦穗黄、叶片绿、茎秆红，所有子图保持相同尺寸。每列顶部标机构或域编号，底部用短标签注明地面采样距离、生育阶段、视角和主要干扰。用两个放大框分别指出叶茎交叠处的类别歧义和低分辨率下只有 1--3 像素宽的茎秆；训练域使用实线边框，未知测试域使用虚线边框，图例明确说明该域在训练中不可见。}
+\vspace{1.05cm}}}
+\caption{GWFSS 中不同采集域的图像与标注示例。该图应突出未知域变化和细茎标注困难，而非重复展示相似样本。}
+\label{fig:dataset}
+\end{figure}
+
+\subsection{评价指标}
+
+遵循数据集论文，本文以四类平均交并比（mIoU）作为主要指标，并同时报告背景、麦穗、茎秆和叶片的类别 IoU。类别 $c$ 的 IoU 为
+\begin{equation}
+\operatorname{IoU}_c=
+\frac{\operatorname{TP}_c}
+{\operatorname{TP}_c+\operatorname{FP}_c+\operatorname{FN}_c},
+\qquad
+\operatorname{mIoU}=\frac{1}{C}\sum_{c=1}^{C}\operatorname{IoU}_c .
+\end{equation}
+由于整体 mIoU 可能掩盖少数类变化，本文将茎秆 IoU 作为核心辅助指标。为直接评价结构完整性，还在二值茎秆掩码上报告 soft-clDice \citep{shit2021cldice}、骨架精确率、骨架召回率和边界 F-score。所有结构指标在相同骨架化参数和边界容差下计算。
+
+效率评测报告参数量、FLOPs、单张图像延迟、峰值显存和分割器前向次数。延迟包含裁剪、窗口选择和局部结果融合，使用相同硬件、批大小和预热设置测量。对于密集多尺度滑窗方法，前向次数按实际产生的裁剪数统计；对于 \BAZR，该值为 $1+K$。
+
+\subsection{实现细节}
+\label{sec:implementation}
+
+基础网络沿用 BEiTv2-Large、ViT-Adapter、Mask2Former 和 SAPA 的组合 \citep{peng2022beitv2,chen2023vitadapter,cheng2022mask2former,lu2022sapa}。编码器使用 ImageNet-1K 预训练权重，输入尺寸为 $512\times512$。优化器采用 AdamW，编码器和解码器的初始学习率分别设为 \placeholder{数值} 和 \placeholder{数值}，权重衰减为 \placeholder{数值}；总训练步数为 \placeholder{数值}，批大小为 \placeholder{有标注/无标注批大小}。弱增强包含随机翻转与尺度变化，强增强包含 \placeholder{颜色、模糊、CutMix 等具体配置}。EMA 动量 $\alpha$、视图数 $M$ 和无监督损失权重分别为 \placeholder{数值}、\placeholder{数值} 和 \placeholder{数值}。
+
+\TRPL 中 $\beta$、$\tau_u$、$\rho$ 和各类别置信阈值通过源域验证集确定；\TCPM 的原型动量 $\mu$、温度 $\tau_p$ 及留一域切换周期分别为 \placeholder{数值}；\BAZR 默认选择 $K=\placeholder{数值}$ 个窗口，候选窗口尺寸、重叠率和非极大值抑制阈值分别为 \placeholder{数值}。所有主结果使用 \placeholder{3 或 5} 个随机种子报告均值和标准差。训练和推理在 \placeholder{GPU 型号与数量} 上完成，代码基于 PyTorch \placeholder{版本} 和 MMSegmentation \placeholder{版本} 实现。
+
+\subsection{与现有方法的比较}
+
+\paragraph{少标注跨域结果}
+Cao 等人的方法使用 Guided Distillation、器官分布筛选和密集多尺度滑窗，在验证集与未知域测试集上分别达到 77.04\% 和 74.68\% mIoU \citep{cao2025detailminority}。DeCon 通过持续预训练、无标注样本选择和不确定性过滤得到 73.61\% 和 67.88\% \citep{ghosh2025decon}。这些结果与统一主干监督基线及本文方法列在\cref{tab:small-label-main}中；除总体精度外，表中保留茎秆结构指标和实际前向次数，以区分训练收益与测试时计算收益。
+
+\begin{table*}[!htbp]
+\centering
+\caption{GWFSS 少标注跨域协议上的比较。mIoU、Stem IoU 和 clDice 的单位为百分数。``--'' 表示原论文未报告；前向次数按每张 $512\times512$ 测试图像的实际裁剪数统计。最佳和次优结果将在完成全部实验后统一标注。}
+\label{tab:small-label-main}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lccccccc}
+\toprule
+方法 & 主干网络 & 使用无标注数据 & 验证 mIoU & 测试 mIoU & Stem IoU & Stem clDice & 前向次数 \\
+\midrule
+监督基线 & BEiTv2-L & 否 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & 1 \\
+DeCon \citep{ghosh2025decon} & ConvNeXt-L/BEiT-L & 是 & 73.61 & 67.88 & -- & -- & \placeholder{核对} \\
+Cao 等 \citep{cao2025detailminority} & BEiTv2-L & 是 & 77.04 & 74.68 & -- & -- & $\sim160$ \\
+\METHOD（全局推理） & BEiTv2-L & 是 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & 1 \\
+\METHOD（\BAZR） & BEiTv2-L & 是 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & $1+K$ \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+统一主干监督基线在验证集与测试集之间下降 \placeholder{数值} 个百分点，说明少量源域标注不足以覆盖未知采集条件。加入本文训练策略后，这一差距变为 \placeholder{数值}，测试 mIoU 相对监督基线提高 \placeholder{数值}。更值得关注的是 Stem IoU 和 clDice 分别变化 \placeholder{数值} 与 \placeholder{数值}：若 clDice 的提升明显大于边界 F-score，增益主要来自断裂减少而非简单加粗茎秆；若两者同步上升，则说明中心线监督也改善了局部轮廓。全局推理与 \BAZR 使用相同权重，它们之间的 \placeholder{数值} mIoU 差异可以归因于局部精细化。该差异需要与前向次数和延迟共同解释；只有在远低于密集滑窗计算量时仍保持接近或更高精度，选择性路由的效率主张才成立。
+
+\paragraph{完整数据区域泛化结果}
+地域划分比随机拆分更直接地暴露采集域偏移。数据集论文中，SegFormer-B1 的 mIoU 为 60.64\%，其中茎秆 IoU 仅为 19.23\%；DeepLabV3+ 的两项结果分别为 52.15\% 和 6.64\% \citep{wang2025gwfss}。\Cref{tab:region-main} 在同一划分上增加统一主干监督基线和 \METHOD，以免把网络容量差异误认为域泛化收益。
+
+\begin{table}[!htbp]
+\centering
+\caption{完整 GWFSS 数据地域划分上的类别 IoU（\%）。}
+\label{tab:region-main}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lccccc}
+\toprule
+方法 & 背景 & 麦穗 & 茎秆 & 叶片 & mIoU \\
+\midrule
+DeepLabV3+ \citep{wang2025gwfss} & 74.32 & 46.25 & 6.64 & 81.40 & 52.15 \\
+SegFormer-B1 \citep{wang2025gwfss} & 75.46 & 66.11 & 19.23 & 81.75 & 60.64 \\
+统一主干监督基线 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\METHOD & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+与统一主干监督基线相比，\METHOD 在未知地域上的 mIoU 提高 \placeholder{数值}，最明显的类别变化出现在 \placeholder{类别及数值}。背景和叶片拥有较大内部区域，其 IoU 变化 \placeholder{数值}；茎秆则提高 \placeholder{数值}。这种不均匀增益符合 \TCPM 的设计预期：边界像素不再参与原型更新后，占比很小的茎秆原型不易被叶片纹理和域特有颜色拖动。还需结合最差源域结果判断改进是否真正来自跨域稳定性。若平均源域表现变化有限、最差源域与未知域同时改善，证据比单一平均 mIoU 上升更能支持原型机制。
+
+\subsection{消融实验}
+\label{sec:ablation}
+
+\paragraph{三个模块的增量作用}
+模块消融从同一监督基线出发，并保持主干、数据和训练预算不变。训练阶段依次引入 \TRPL 与 \TCPM，\BAZR 只改变推理路径，因此\cref{tab:module-ablation}中启用 \TCPM 的两组设置共享模型权重。这样的排列避免把训练增益和增加测试计算混在一起。
+
+\begin{table*}[!htbp]
+\centering
+\caption{三个模块在少标注协议上的消融。$\checkmark$ 表示启用对应模块。}
+\label{tab:module-ablation}
+\begin{tabular}{ccccccccc}
+\toprule
+\TRPL & \TCPM & \BAZR & 验证 mIoU & 测试 mIoU & Stem IoU & Stem clDice & Boundary F & 前向次数 \\
+\midrule
+ & & & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & 1 \\
+$\checkmark$ & & & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & 1 \\
+$\checkmark$ & $\checkmark$ & & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & 1 \\
+$\checkmark$ & $\checkmark$ & $\checkmark$ & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & $1+K$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\TRPL 使 Stem IoU 从 \placeholder{数值} 变为 \placeholder{数值}，对应的 clDice 变化为 \placeholder{数值}。如果总体 mIoU 的增幅较小而结构指标变化明显，说明区域平均指标确实低估了细茎连续性的改善。\TCPM 加入后，源域验证结果变化 \placeholder{数值}，未知域测试结果变化 \placeholder{数值}；二者之间的差异反映该模块更偏向特征迁移还是一般正则化。\BAZR 带来的变化应与 \TRPL 解耦理解：前者修正模型已经暴露出的局部结构失效，后者减少训练信号中的结构噪声。二者都改善 clDice 并不意味着作用重复，错误位置在逐图统计中的重合率 \placeholder{数值} 可以进一步检验它们是否处理不同的断裂案例。
+
+\paragraph{伪标签结构设计}
+固定阈值、多视图不确定性和中心线--区域解耦使用相同教师预测，差别只在伪标签如何进入损失。源域验证标签在训练时保持隐藏，仅用于离线计算\cref{tab:trpl-ablation}中的接纳率和中心线准确率，因此不会泄漏到教师更新。
+\begin{table}[!htbp]
+\centering
+\caption{\TRPL 设计消融。}
+\label{tab:trpl-ablation}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+伪标签策略 & 接纳率 & 中心线准确率 & Stem IoU & clDice \\
+\midrule
+固定类别阈值 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+熵不确定性 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+多视图不确定性 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+中心线--区域解耦（\TRPL） & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+单纯降低阈值通常会提高接纳率，却可能同时降低中心线准确率；这两项应作为一组而不是分开解读。多视图不确定性把接纳率从 \placeholder{数值} 调整到 \placeholder{数值}，中心线准确率变化 \placeholder{数值}，说明 \placeholder{结合实际结果解释尺度一致性筛除了噪声，或保留了更多稳定像素}。完整 \TRPL 的关键证据是：在不显著牺牲中心线准确率的情况下，Stem IoU 与 clDice分别提高 \placeholder{数值} 和 \placeholder{数值}。若仅有接纳率上升而结构指标没有变化，则改进很可能只是扩大了监督覆盖；只有中心线误差与预测断裂数同步下降，才能说明中心线--区域解耦真正改变了伪标签质量。
+
+\paragraph{原型来源与域泛化}
+原型消融逐步改变用于求均值的像素集合，同时单独移除留一域模拟。除平均性能外，\cref{tab:prototype-ablation}记录最差源域 mIoU；后者对少数困难域更敏感，可以避免平均值被样本较多或外观较容易的域主导。
+
+\begin{table}[!htbp]
+\centering
+\caption{\TCPM 的原型构建与域训练消融。}
+\label{tab:prototype-ablation}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lccc}
+\toprule
+原型策略 & 验证 mIoU & 最差源域 mIoU & 测试 mIoU \\
+\midrule
+无原型 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+完整高置信区域 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+收缩内部区域 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+拓扑核心，无留一域模拟 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+拓扑核心与留一域模拟（\TCPM） & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+完整高置信区域原型的测试 mIoU 为 \placeholder{数值}，收缩内部区域后变为 \placeholder{数值}。二者的差值反映边界噪声对类别中心的影响，但还不能证明茎秆需要拓扑核心。将内部区域替换为按器官定义的核心后，最差源域和未知域分别变化 \placeholder{数值} 与 \placeholder{数值}；同时，茎秆域级原型到全局原型的平均距离由 \placeholder{数值} 降至 \placeholder{数值}。性能和距离共同变化时，才能把收益解释为域间语义收紧，而不是额外损失带来的普通正则化。移除留一域模拟后，源域均值 \placeholder{变化} 而未知域结果 \placeholder{变化}，这一对照用于检验模拟域偏移是否确实贡献于泛化。
+
+\paragraph{精细化策略的精度--效率权衡}
+所有精细化策略复用同一模型权重，因而性能变化只来自计算位置和预算。除单尺度与密集滑窗两个端点外，\cref{tab:routing-ablation}比较仅熵路由和完整断裂感知路由，并通过改变 $K$ 描述精度--延迟曲线。端点覆盖率衡量所选窗口是否真正命中结构错误，而不是只命中纹理复杂区域。
+
+\begin{table}[!htbp]
+\centering
+\caption{\BAZR 的精度--效率消融。延迟在相同硬件上测量。}
+\label{tab:routing-ablation}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lccccc}
+\toprule
+推理策略 & $K$ & mIoU & Stem IoU & 端点覆盖率 & 延迟 \\
+\midrule
+全局单尺度 & 0 & \placeholder{待测} & \placeholder{待测} & -- & \placeholder{待测} \\
+仅熵路由 & \placeholder{数值} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\BAZR & 2 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\BAZR & 4 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+\BAZR & 8 & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} & \placeholder{待测} \\
+密集多尺度滑窗 \citep{cao2025detailminority} & $\sim159$ & \placeholder{待测} & \placeholder{待测} & 100 & \placeholder{待测} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+仅熵路由覆盖 \placeholder{数值} 的异常端点，其中 \placeholder{数值} 的窗口落在叶片或麦穗的普通高熵边界。加入端点密度和内部尺度差异后，覆盖率变为 \placeholder{数值}，Stem IoU 增加 \placeholder{数值}；这一变化直接检验结构信号是否比熵更适合分配小麦图像的局部计算。随着 $K$ 从 2 增至 8，精度增益由 \placeholder{数值} 逐渐饱和，而延迟近似线性增长 \placeholder{数值}。饱和点说明剩余错误更可能来自类别混淆或全局上下文缺失，继续放大局部不会有效修复。与密集多尺度滑窗相比，默认预算使用 \placeholder{比例} 的延迟和 \placeholder{比例} 的前向次数达到 \placeholder{精度差值}，这比单独报告加速倍数更完整地呈现了精度代价。
+
+\subsection{定性分析与讨论}
+
+\begin{figure*}[!htbp]
+\centering
+%\includegraphics[width=0.96\linewidth]{figures/qualitative_comparison.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.15cm}
+\placeholder{定性比较图参考提示词：制作 6 行乘 7 列的统一图版，列依次为 RGB、真值、监督基线、现有半监督基线、加入 TRPL、加入 TCPM、完整 TopoWheat；行分别选择 1--3 像素极细茎、叶茎交叠、叶片遮挡导致的真实可见中断、衰老黄色器官、杂草与残体背景、未知域低分辨率图像。所有预测使用固定类别颜色和相同透明度叠加在 RGB 上。每行选择同一局部区域放大，红色箭头标漏分断裂，黄色箭头标叶茎混淆，白色箭头标错误跨遮挡连接；在完整方法列用绿色轮廓标出被正确恢复的可见茎秆。至少保留一行完整方法仍失败的案例，禁止只展示成功样本；子图下方可附该图 Stem IoU/clDice，便于把视觉差异与结构指标对应。}
+\vspace{1.15cm}}}
+\caption{少标注和未知域条件下的定性比较。后续图中颜色映射应与数据集论文保持一致，并同时展示成功案例和典型失败案例。}
+\label{fig:qualitative}
+\end{figure*}
+
+\begin{figure*}[!htbp]
+\centering
+%\includegraphics[width=0.96\linewidth]{figures/diagnostic_analysis.pdf}
+\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
+\placeholder{机制诊断图参考提示词：横向分为 A、B、C 三个面板。A 面板用于 TRPL，选同一无标签样本展示固定阈值伪标签、多视图不确定性、稳定中心线、忽略边界和离线真值，在局部放大处标出固定阈值删除的真茎与 TRPL 排除的假茎，并附接纳率/中心线准确率。B 面板用于 TCPM，画两组使用相同 UMAP 参数的散点：无原型与拓扑核心原型；点形状表示背景、麦穗、茎秆、叶片，颜色深浅表示不同采集域，叠加域级原型和全局原型的大号标记，并用小图显示类内跨域距离与茎秆--叶片间距。C 面板用于 BAZR，依次展示熵热图、端点热图、内部尺度差异、综合路由分数、Top-K 窗口及融合结果；并排放置一个仅熵会误选的叶片边界和一个完整路由命中的中等熵断茎。三个面板使用一致的样本编号、颜色图例和箭头含义，标题写成可验证的机制而非模块名称。}
+\vspace{1.05cm}}}
+\caption{三个模块的机制分析。可视化用于验证可靠中心线、跨域类别聚合和结构风险路由是否按预期工作。}
+\label{fig:diagnostic}
+\end{figure*}
+
+\Cref{fig:qualitative} 将模块逐步加入后的结果放在同一局部区域中比较。需要关注的不只是预测轮廓是否更平滑，而是错误类型是否按设计发生变化：\TRPL 应减少固定阈值造成的细茎漏分，\TCPM 应降低未知域中的叶茎互换，\BAZR 则应集中修复全局预测已经暴露出的局部断裂。\Cref{fig:diagnostic} 提供更直接的机制证据。伪标签覆盖率与中心线准确率对应 \TRPL 的监督质量，类内跨域距离对应 \TCPM 的表示稳定性，端点覆盖率和反事实窗口则对应 \BAZR 的路由有效性。可视化只有与这些量化变化一致时才用于支持结论。
+
+平均结果之外，本文按地面采样距离、生育阶段和茎秆像素占比分组统计性能。\TRPL 在低占比细茎组的变化为 \placeholder{数值}，\TCPM 在域偏移最大的分组中变化 \placeholder{数值}，\BAZR 的收益随异常端点密度呈现 \placeholder{趋势与相关系数}。这些关系将使用分组置信区间和逐图配对检验，而不是根据少量样例作主观归因。若某个模块在预期困难组中没有更明显的收益，正文将据实收缩相应机制结论。
+
+方法的边界也应从机制上理解。多个茎秆在低分辨率下完全重合时，多视图预测可能一致却仍然错误，稳定中心线无法恢复已经消失的实例信息。固定 $K$ 则隐含了图像难度相近的假设：它会在简单图像上分配多余计算，也会在极复杂图像上遗漏困难区域。本文报告这两类失败样本，并比较固定预算与自适应停止阈值。另一个需要单独检查的问题是遮挡；本文只分割可见器官，拓扑损失不应跨叶片补全不可见茎秆，因此错误连接数会与断裂数同时报告。

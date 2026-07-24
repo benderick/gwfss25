@@ -1,0 +1,5 @@
+_BASE_: competition_baseline.yaml
+
+MODEL:
+  SEM_SEG_HEAD:
+    UPSAMPLE_MODE: "sapa"

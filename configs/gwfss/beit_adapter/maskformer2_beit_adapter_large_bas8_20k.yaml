@@ -14,3 +14,22 @@ MODEL:
     PRETRAIN_IMG_SIZE: 384
   PIXEL_MEAN: [123.675, 116.280, 103.530]
   PIXEL_STD: [58.395, 57.120, 57.375]
+
+# The released parent config was missing. Keep the Stage 1 settings stated in
+# the paper here instead of relying on defaults from Base-Gwfss.
+DATASETS:
+  TRAIN: ("gwfss_sem_seg_train",)
+  TEST: ("gwfss_sem_seg_val",)
+
+SOLVER:
+  IMS_PER_BATCH: 1
+  MAX_ITER: 20000
+  CHECKPOINT_PERIOD: 1000
+
+SSL:
+  TRAIN_SSL: False
+
+TEST:
+  EVAL_PERIOD: 1000
+  AUG:
+    ENABLED: False

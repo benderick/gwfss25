@@ -22,7 +22,6 @@ from detectron2.modeling import SEM_SEG_HEADS_REGISTRY
 from ..transformer_decoder.position_encoding import PositionEmbeddingSine
 from ..transformer_decoder.transformer import _get_clones, _get_activation_fn
 from .ops.modules import MSDeformAttn
-from .SAPAExp import SAPAExp
 
 # MSDeformAttn Transformer encoder in deformable detr
 class MSDeformAttnTransformerEncoderOnly(nn.Module):
@@ -183,6 +182,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         # deformable transformer encoder args
         transformer_in_features: List[str],
         common_stride: int,
+        upsample_mode: str,
     ):
         """
         NOTE: this interface is experimental.
@@ -258,6 +258,12 @@ class MSDeformAttnPixelDecoder(nn.Module):
         
         self.maskformer_num_feature_levels = 3  # always use 3 scales
         self.common_stride = common_stride
+        self.upsample_mode = upsample_mode.lower()
+        if self.upsample_mode not in {"bilinear", "sapa"}:
+            raise ValueError(
+                "MODEL.SEM_SEG_HEAD.UPSAMPLE_MODE must be 'bilinear' or 'sapa', "
+                f"got {upsample_mode!r}"
+            )
 
         # extra fpn levels
         stride = min(self.transformer_feature_strides)
@@ -296,9 +302,20 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.lateral_convs = lateral_convs[::-1]
         self.output_convs = output_convs[::-1]
 
-        self.sapa_exp = SAPAExp(conv_dim, conv_dim, conv_dim, 
-                                q_mode='gate', v_embed=True, up_factor=2, up_kernel_size=5, 
-                                embedding_dim=conv_dim, qkv_bias=True)
+        if self.upsample_mode == "sapa":
+            from .SAPAExp import SAPAExp
+
+            self.sapa_exp = SAPAExp(
+                conv_dim,
+                conv_dim,
+                conv_dim,
+                q_mode="gate",
+                v_embed=True,
+                up_factor=2,
+                up_kernel_size=5,
+                embedding_dim=conv_dim,
+                qkv_bias=True,
+            )
 
     @classmethod
     def from_config(cls, cfg, input_shape: Dict[str, ShapeSpec]):
@@ -318,6 +335,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         ] = cfg.MODEL.SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS  # a separate config
         ret["transformer_in_features"] = cfg.MODEL.SEM_SEG_HEAD.DEFORMABLE_TRANSFORMER_ENCODER_IN_FEATURES
         ret["common_stride"] = cfg.MODEL.SEM_SEG_HEAD.COMMON_STRIDE
+        ret["upsample_mode"] = cfg.MODEL.SEM_SEG_HEAD.UPSAMPLE_MODE
         return ret
 
     @autocast(enabled=False)
@@ -355,12 +373,16 @@ class MSDeformAttnPixelDecoder(nn.Module):
             output_conv = self.output_convs[idx]
             cur_fpn = lateral_conv(x)
 
-            # Following FPN implementation, we use nearest upsampling here
-            # y = cur_fpn + F.interpolate(out[-1], size=cur_fpn.shape[-2:], mode="bilinear", align_corners=False)
-           
-            # apply SAPA-G upsampling here
-            # print(x.shape, cur_fpn.shape, out[-1].shape)
-            y = cur_fpn + self.sapa_exp(cur_fpn, out[-1])
+            if self.upsample_mode == "sapa":
+                upsampled = self.sapa_exp(cur_fpn, out[-1])
+            else:
+                upsampled = F.interpolate(
+                    out[-1],
+                    size=cur_fpn.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            y = cur_fpn + upsampled
 
             y = output_conv(y)
             out.append(y)

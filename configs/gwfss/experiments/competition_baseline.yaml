@@ -1,0 +1,21 @@
+_BASE_: ../beit_adapter/maskformer2_beit_adapter_large_bas8_20k.yaml
+
+MODEL:
+  SEM_SEG_HEAD:
+    UPSAMPLE_MODE: "bilinear"
+
+DATASETS:
+  TRAIN: ("gwfss_sem_seg_train",)
+  TEST: ("gwfss_sem_seg_val",)
+
+SOLVER:
+  IMS_PER_BATCH: 2
+  MAX_ITER: 20000
+  CHECKPOINT_PERIOD: 1000
+
+TEST:
+  EVAL_PERIOD: 1000
+  AUG:
+    ENABLED: False
+
+SEED: 2025

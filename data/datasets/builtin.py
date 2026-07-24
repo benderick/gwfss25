@@ -33,7 +33,11 @@ from .coco_panoptic import register_coco_panoptic, register_coco_panoptic_separa
 from .coco_images import register_all_coco_unlabel
 # from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
-from .gwfss_semantic import register_all_gwfss_semantic, load_gwfss_semantic
+from .gwfss_semantic import (
+    load_gwfss_semantic,
+    load_gwfss_semantic_domains,
+    register_all_gwfss_semantic,
+)
 from .gwfss_images import register_all_gwfss_unlabel
 
 # ==== Predefined datasets and splits for COCO ==========
@@ -243,7 +247,8 @@ def register_all_cityscapes(root):
 # ==== Predefined splits for raw gwfss images ===========
 _RAW_GWFSS_SPLITS = {
     "gwfss_{task}_train": ("GWFSS/gwfss_competition_train/images", "GWFSS/gwfss_competition_train/class_id"),
-    "gwfss_{task}_val": ("GWFSS/gwfss_competition_train/images", "GWFSS/gwfss_competition_train/class_id"),
+    "gwfss_{task}_val": ("GWFSS/gwfss_competition_val/images", "GWFSS/gwfss_competition_val/class_id"),
+    "gwfss_{task}_test": ("GWFSS/gwfss_competition_test/images", "GWFSS/gwfss_competition_test/class_id"),
 }
 
 def register_all_gwfss(root):
@@ -266,6 +271,31 @@ def register_all_gwfss(root):
             evaluator_type="sem_seg",
             ignore_label=255,
             **meta,
+        )
+
+    full_image_root = os.path.join(root, "GWFSS/GWFSS_v1.0_labelled/images")
+    full_gt_root = os.path.join(root, "GWFSS/GWFSS_v1.0_labelled/class_id")
+    region_splits = {
+        "gwfss_full_region_train": (
+            "Arvalis", "CIMMYT", "ETHZ", "INRAE", "NJAU", "RRES", "ULiege_CRA-W",
+        ),
+        "gwfss_full_region_val": ("UTokyo",),
+        "gwfss_full_region_test": ("UQ_new",),
+    }
+    for key, domains in region_splits.items():
+        DatasetCatalog.register(
+            key,
+            lambda x=full_image_root, y=full_gt_root, z=domains:
+                load_gwfss_semantic_domains(x, y, z),
+        )
+        MetadataCatalog.get(key).set(
+            image_dir=full_image_root,
+            gt_dir=full_gt_root,
+            evaluator_type="sem_seg",
+            ignore_label=255,
+            thing_classes=[],
+            stuff_classes=["background", "head", "stem", "leaf"],
+            stuff_colors=[[0, 0, 0], [50, 255, 132], [50, 132, 255], [214, 255, 50]],
         )
 
 
@@ -319,4 +349,4 @@ if __name__.endswith(".builtin"):
     register_all_ade20k(_root)
     register_all_gwfss(_root)
     # register_all_gwfss_semantic(_root)
-    # register_all_gwfss_unlabel(_root)
+    register_all_gwfss_unlabel(_root)

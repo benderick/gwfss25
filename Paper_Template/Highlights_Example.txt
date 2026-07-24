@@ -1,0 +1,8 @@
+Highlights
+
+1. Formulates robust spike detection as a coupled density-domain-localization problem.
+2. Proposes ASWB for scene-adaptive frequency-domain feature encoding.
+3. Proposes MSIA for hypergraph-based cross-scale and cross-domain aggregation.
+4. Develops UGDR for uncertainty-guided boundary refinement without inference cost.
+5. Improves AP by 10.0 points on GWHD and transfers effectively to DRPD.
+

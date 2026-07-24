@@ -1,0 +1,148 @@
+\documentclass[preprint,10pt,authoryear]{elsarticle}
+\usepackage[UTF8]{ctex}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{xcolor}
+
+\usepackage{geometry}
+\geometry{
+  top=1in,
+  bottom=1in,
+  left=0.7in,
+  right=0.7in
+}
+
+\usepackage{graphicx} 
+\usepackage{subcaption}  
+
+\usepackage{xspace}
+
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\usepackage[capitalize,nameinlink]{cleveref}
+\crefname{section}{节}{节}
+\Crefname{section}{节}{节}
+\crefname{table}{表}{表}
+\Crefname{table}{表}{表}
+\crefname{figure}{图}{图}
+\Crefname{figure}{图}{图}
+\crefname{equation}{式}{式}
+\Crefname{equation}{式}{式}
+\crefname{algorithm}{算法}{算法}
+\Crefname{algorithm}{算法}{算法}
+
+\usepackage{caption}   
+\DeclareCaptionLabelFormat{myformat}{\textbf{图 #2}}
+\captionsetup[figure]{labelformat=myformat}
+
+
+\usepackage{multirow} 
+\usepackage{algorithm}  
+\usepackage{algpseudocode}  
+% \usepackage{caption}   
+\usepackage{booktabs} 
+\usepackage{setspace}  
+\usepackage{lineno}
+\modulolinenumbers[1]
+
+\newcommand{\METHOD}{TopoWheat\xspace}
+\newcommand{\TRPL}{TRPL\xspace}
+\newcommand{\TRPLfull}{Topology-Reliable Pseudo-Labeling\xspace}
+\newcommand{\TCPM}{TCPM\xspace}
+\newcommand{\TCPMfull}{Topology-Core Prototype Memory\xspace}
+\newcommand{\BAZR}{BAZR\xspace}
+\newcommand{\BAZRfull}{Break-Aware Zoom Refinement\xspace}
+\newcommand{\placeholder}[1]{%
+  \ifmmode
+    \text{\textcolor{blue}{【#1】}}%
+  \else
+    \textcolor{blue}{【#1】}%
+  \fi
+}
+
+\DeclareRobustCommand{\rev}[2]{%
+  \ifcase#1%
+    #2%
+  \or%
+    \textcolor{blue}{#2}%
+  \or%
+    \textcolor{red}{#2}%
+  \else%
+    #2%
+  \fi%
+}
+
+\begin{document}
+\linenumbers
+
+\begin{frontmatter}
+\title{\METHOD：面向跨域小样本小麦器官分割的拓扑可靠半监督学习与断裂感知精细化方法}
+\author[1,2]{Yiqun Wang}
+\author[1,2]{Shuo Zhang}
+\author[1,2]{Xiaolong Liu}
+\author[3,4]{Ze Ji}
+% \author[3]{Guoliang Liu}
+\author[1,2]{Weikuan Jia\corref{co}}
+\cortext[co]{Corresponding author.}
+% \affiliation[1]{School of Computer Science and Artificial Intelligence, Shandong Normal University, Jinan 250358, China}
+\affiliation[1]{
+    organization={School of Computer Science and Artificial Intelligence, Shandong Normal University},
+    city={Jinan 250358},
+    % postcode={},
+    country={China},
+}
+\affiliation[2]{
+    organization={Shandong Key Laboratory of Intelligent Collaborative Perception and Computing, Shandong Normal University},
+    city={Jinan 250358},
+    % postcode={},
+    country={China},
+}
+\affiliation[3]{
+    organization={College of Mechanical and Electrical Engineering, Hohai University},
+    city={Changzhou 213200},
+    % postcode={},
+    country={China},
+}
+\affiliation[4]{
+    organization={School of Engineering, Cardiff University},
+    city={Cardiff CF24 3AA},
+    % postcode={},
+    country={United Kingdom},
+}
+
+\begin{abstract}
+复杂田间环境中的小麦器官语义分割是解析群体结构、器官比例及生育进程的重要基础，但其性能受到像素级标注稀缺、采集域差异以及细长茎秆易断裂等因素的共同制约。现有半监督方法通常依据区域或像素置信度筛选伪标签，难以区分茎秆中心线的结构可靠性与边界宽度的不确定性；现有跨域方法也容易将噪声边界引入类别对齐。高精度方案依赖的密集多尺度滑窗还会带来显著计算开销。针对这些相互关联的问题，本文提出统一框架 \METHOD。框架中的拓扑可靠伪标签学习模块 \TRPL 利用多尺度与扰动一致性，将无标注茎秆监督解耦为稳定中心线、可靠区域和不确定边界。由此获得的稳定结构不只服务于伪监督，还被拓扑核心原型记忆模块 \TCPM 用来构建域级和全局类别原型，通过留一域模拟与对比约束学习域不变器官表示。推理时，断裂感知选择性放大模块 \BAZR 复用同一拓扑线索，根据茎秆预测熵、骨架端点和内部尺度分歧定位困难区域，仅对少量候选窗口执行高分辨率精细化。本文在全球小麦全语义分割数据集的少标注协议与区域划分协议上进行验证。实验结果表明，\METHOD 在使用相同标注预算的条件下取得 \placeholder{验证集 mIoU} 和 \placeholder{未知域测试集 mIoU}，其中茎秆 IoU 提升 \placeholder{数值} 个百分点；与密集多尺度推理相比，推理前向次数减少 \placeholder{比例}，验证了所提方法在精度、拓扑完整性、跨域鲁棒性和计算效率方面的有效性。
+\end{abstract}
+
+\begin{keyword}
+小麦器官分割，半监督语义分割，拓扑可靠伪标签，域泛化，高分辨率精细化
+\end{keyword}
+
+\end{frontmatter}
+
+%%%%%%%%% BODY TEXT
+\input{content/introduction}
+
+\input{content/related_work}
+
+\input{content/method}
+
+\input{content/experiments}
+
+\input{content/conclusion}
+
+\section{致谢}
+\label{sec:Acknowledgments}
+本研究得到国家自然科学基金（No. 62372278）、济南市校融合发展项目（JNSX2025008，202534102）和山东省泰山学者计划资助。
+
+
+\bibliographystyle{elsarticle-harv} 
+\bibliography{references.bib}    
+
+\end{document}

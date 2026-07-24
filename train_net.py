@@ -163,24 +163,27 @@ class Trainer(DefaultTrainer):
         # Semantic segmentation dataset mapper
         if cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_semantic":
             mapper = MaskFormerSemanticDatasetMapper(cfg, True)
+            labeled_loader = build_detection_train_loader(cfg, mapper=mapper)
+            if not cfg.SSL.TRAIN_SSL:
+                return labeled_loader, None
 
             cfg.defrost()
             cfg_gan = cfg.clone()
             cfg_gan.INPUT = cfg.INPUT
-            cfg_gan.DATASETS.TRAIN = ("gwfss_unlabel_train")
+            cfg_gan.DATASETS.TRAIN = (cfg.SSL.UNLABELED_DATASET,)
             
             cfg_gan.freeze()
             cfg.freeze()
             mapper_unl = MaskFormerImageDatasetMapper(cfg_gan, True)
 
-            return build_detection_train_loader(cfg, mapper=mapper), build_detection_train_loader(cfg_gan, mapper=mapper_unl)
+            return labeled_loader, build_detection_train_loader(cfg_gan, mapper=mapper_unl)
         # Panoptic segmentation dataset mapper
         elif cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_panoptic":
             mapper = MaskFormerPanopticDatasetMapper(cfg, True)
             cfg.defrost()
             cfg_gan = cfg.clone()
             cfg_gan.INPUT = cfg.INPUT
-            cfg_gan.DATASETS.TRAIN = ("gwfss_unlabel_train")
+            cfg_gan.DATASETS.TRAIN = (cfg.SSL.UNLABELED_DATASET,)
             cfg_gan.freeze()
             cfg.freeze()
             mapper_unl = MaskFormerImageDatasetMapper(cfg_gan, True)
@@ -191,7 +194,7 @@ class Trainer(DefaultTrainer):
             cfg.defrost()
             cfg_gan = cfg.clone()
             cfg_gan.INPUT = cfg.INPUT
-            cfg_gan.DATASETS.TRAIN = ("gwfss_unlabel_train")
+            cfg_gan.DATASETS.TRAIN = (cfg.SSL.UNLABELED_DATASET,)
 
             if cfg.SSL.TRAIN_SSL:
                 cfg_gan.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"

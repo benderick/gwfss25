@@ -20,20 +20,19 @@ logger = logging.getLogger(__name__)
 
 def get_gwfss_semantic_files(image_dir, gt_dir, json_info=None):
     files = []
-    # scan through the directory
-    image_list = os.listdir(image_dir)
-    print(f"{len(image_list)} images found in '{image_dir}'.")
+    image_list = sorted(os.listdir(image_dir))
+    logger.info("%s images found in '%s'.", len(image_list), image_dir)
     image_dict = {}
     for basename in image_list:
         image_file = os.path.join(image_dir, basename)
+        if not os.path.isfile(image_file):
+            continue
         suffix = ".png"
         assert basename.endswith(suffix), basename
-        basename = os.path.basename(basename)[: -len(suffix)]
-
-        image_dict[basename] = image_file
+        image_dict[os.path.splitext(basename)[0]] = image_file
     
-    for ann in os.listdir(gt_dir):
-        image_file = image_dict.get(ann.split(".")[0], None)
+    for ann in sorted(os.listdir(gt_dir)):
+        image_file = image_dict.get(os.path.splitext(ann)[0], None)
         label_file = os.path.join(gt_dir, ann)
         segments_info = None
         if image_file is not None:
@@ -65,8 +64,6 @@ def load_gwfss_semantic(image_dir, gt_dir):
                     os.path.splitext(os.path.basename(image_file))[0]
                 ),
                 "sem_seg_file_name": label_file,
-                "height": 512,
-                "width": 512,
             }
         )
     assert len(ret), f"No images found in {image_dir}!"
@@ -74,6 +71,19 @@ def load_gwfss_semantic(image_dir, gt_dir):
         ret[0]["sem_seg_file_name"]
     ), "Please generate labelTrainIds.png with cityscapesscripts/preparation/createTrainIdLabelImgs.py"  # noqa
     return ret
+
+
+def load_gwfss_semantic_domains(image_root, gt_root, domains):
+    records = []
+    for domain in domains:
+        domain_records = load_gwfss_semantic(
+            os.path.join(image_root, domain),
+            os.path.join(gt_root, domain),
+        )
+        for record in domain_records:
+            record["image_id"] = "{}/{}".format(domain, record["image_id"])
+        records.extend(domain_records)
+    return records
 
 
 _RAW_GWFSS_SEMANTIC_SPLITS = {
@@ -155,4 +165,3 @@ def register_all_gwfss_semantic(root):
             label_divisor=1000,
             **meta,
         )
-
