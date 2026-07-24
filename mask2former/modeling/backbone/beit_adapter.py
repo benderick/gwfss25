@@ -6,6 +6,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from detectron2.layers import NaiveSyncBatchNorm
 from ops.modules import MSDeformAttn
 from timm.models.layers import DropPath, trunc_normal_
 from torch.nn.init import normal_
@@ -47,10 +48,10 @@ class BEiTAdapter(BEiT):
         ])
 
         self.up = nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
-        self.norm1 = nn.SyncBatchNorm(embed_dim)
-        self.norm2 = nn.SyncBatchNorm(embed_dim)
-        self.norm3 = nn.SyncBatchNorm(embed_dim)
-        self.norm4 = nn.SyncBatchNorm(embed_dim)
+        self.norm1 = NaiveSyncBatchNorm(embed_dim)
+        self.norm2 = NaiveSyncBatchNorm(embed_dim)
+        self.norm3 = NaiveSyncBatchNorm(embed_dim)
+        self.norm4 = NaiveSyncBatchNorm(embed_dim)
 
         self.up.apply(self._init_weights)
         self.spm.apply(self._init_weights)
