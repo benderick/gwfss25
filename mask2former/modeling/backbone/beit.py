@@ -23,6 +23,33 @@ import torch.utils.checkpoint as cp
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 
 
+def _build_relative_position_index(window_size, device=None):
+    height, width = window_size
+    coords_h = torch.arange(height, device=device)
+    coords_w = torch.arange(width, device=device)
+    coords = torch.stack(torch.meshgrid([coords_h, coords_w]))
+    coords_flatten = torch.flatten(coords, 1)
+    relative_coords = (
+        coords_flatten[:, :, None] - coords_flatten[:, None, :]
+    )
+    relative_coords = relative_coords.permute(1, 2, 0).contiguous()
+    relative_coords[:, :, 0] += height - 1
+    relative_coords[:, :, 1] += width - 1
+    relative_coords[:, :, 0] *= 2 * width - 1
+
+    num_relative_distance = (2 * height - 1) * (2 * width - 1) + 3
+    relative_position_index = torch.zeros(
+        size=(height * width + 1,) * 2,
+        dtype=relative_coords.dtype,
+        device=device,
+    )
+    relative_position_index[1:, 1:] = relative_coords.sum(-1)
+    relative_position_index[0, 0:] = num_relative_distance - 3
+    relative_position_index[0:, 0] = num_relative_distance - 2
+    relative_position_index[0, 0] = num_relative_distance - 1
+    return relative_position_index
+
+
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample  (when applied in main path of
     residual blocks)."""
@@ -112,8 +139,49 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-    
-    def forward(self, x, rel_pos_bias=None):
+
+    def _get_relative_position_bias(self, window_size):
+        if window_size == self.window_size:
+            relative_position_bias_table = self.relative_position_bias_table
+            relative_position_index = self.relative_position_index
+        else:
+            source_height, source_width = self.window_size
+            target_height, target_width = window_size
+            spatial_bias = self.relative_position_bias_table[:-3]
+            extra_bias = self.relative_position_bias_table[-3:]
+            spatial_bias = spatial_bias.transpose(0, 1).reshape(
+                1,
+                self.num_heads,
+                2 * source_height - 1,
+                2 * source_width - 1,
+            )
+            spatial_bias = F.interpolate(
+                spatial_bias,
+                size=(2 * target_height - 1, 2 * target_width - 1),
+                mode="bicubic",
+                align_corners=False,
+            )
+            spatial_bias = (
+                spatial_bias.reshape(self.num_heads, -1)
+                .transpose(0, 1)
+                .contiguous()
+            )
+            relative_position_bias_table = torch.cat(
+                (spatial_bias, extra_bias),
+                dim=0,
+            )
+            relative_position_index = _build_relative_position_index(
+                window_size,
+                device=relative_position_bias_table.device,
+            )
+
+        height, width = window_size
+        relative_position_bias = relative_position_bias_table[
+            relative_position_index.reshape(-1)
+        ].reshape(height * width + 1, height * width + 1, -1)
+        return relative_position_bias.permute(2, 0, 1).contiguous()
+
+    def forward(self, x, rel_pos_bias=None, H=None, W=None):
         B, N, C = x.shape
         qkv_bias = None
         if self.q_bias is not None:
@@ -127,12 +195,21 @@ class Attention(nn.Module):
         attn = (q @ k.transpose(-2, -1))
         
         if self.relative_position_bias_table is not None:
-            relative_position_bias = \
-                self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                    self.window_size[0] * self.window_size[1] + 1,
-                    self.window_size[0] * self.window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
-            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-            # relative_position_bias = relative_position_bias[:, 1:, 1:]
+            window_size = self.window_size if H is None or W is None else (H, W)
+            expected_tokens = window_size[0] * window_size[1] + 1
+            if N != expected_tokens:
+                raise ValueError(
+                    "BEiT attention received {} tokens for a {}x{} patch grid; "
+                    "expected {} tokens including cls".format(
+                        N,
+                        window_size[0],
+                        window_size[1],
+                        expected_tokens,
+                    )
+                )
+            relative_position_bias = self._get_relative_position_bias(
+                window_size
+            )
             attn = attn + relative_position_bias.unsqueeze(0)
         
         if rel_pos_bias is not None:
@@ -173,10 +250,25 @@ class Block(nn.Module):
     def forward(self, x, H, W, rel_pos_bias=None):
         def _inner_forward(x):
             if self.gamma_1 is None:
-                x = x + self.drop_path(self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias))
+                x = x + self.drop_path(
+                    self.attn(
+                        self.norm1(x),
+                        rel_pos_bias=rel_pos_bias,
+                        H=H,
+                        W=W,
+                    )
+                )
                 x = x + self.drop_path(self.mlp(self.norm2(x)))
             else:
-                x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias))
+                x = x + self.drop_path(
+                    self.gamma_1
+                    * self.attn(
+                        self.norm1(x),
+                        rel_pos_bias=rel_pos_bias,
+                        H=H,
+                        W=W,
+                    )
+                )
                 x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
             return x
 
