@@ -29,6 +29,17 @@ import detectron2.utils.comm as comm
 from .modeling.criterion import SetCriterion
 from .modeling.matcher import HungarianMatcher
 from .thresh_control import ThreshController
+from .topowheat import (
+    BAZRFusionGate,
+    TopologyCorePrototypeMemory,
+    build_core_mask,
+    build_trpl_targets,
+    masked_dice_loss,
+    masked_nll_loss,
+    query_semantic_probabilities,
+    soft_cldice_loss,
+)
+from .topowheat.topology import soft_skeletonize
 
 
 @META_ARCH_REGISTRY.register()
@@ -122,6 +133,50 @@ class MaskFormer(nn.Module):
         self.thresh_class = 0.7
         if hasattr(self.cfg, 'THRESH_CONTROLLER_ON') and self.cfg.THRESH_CONTROLLER_ON:
             self.thresh_controller = ThreshController(momentum=0.999, thresh_init= self.thresh_class)
+
+        topowheat = self.cfg.MODEL.TOPOWHEAT
+        self.stem_class = int(topowheat.STEM_CLASS)
+        self.leaf_class = int(topowheat.LEAF_CLASS)
+        self.trpl_enabled = bool(topowheat.TRPL.ENABLED)
+        self.tcpm_enabled = bool(topowheat.TCPM.ENABLED)
+        self.bazr_aux_enabled = bool(topowheat.BAZR.AUX_HEADS_ENABLED)
+        self.trpl_cfg = topowheat.TRPL
+        self.tcpm_cfg = topowheat.TCPM
+        self.bazr_cfg = topowheat.BAZR
+
+        if self.tcpm_enabled:
+            self.prototype_memory = TopologyCorePrototypeMemory(
+                num_domains=self.tcpm_cfg.NUM_DOMAINS,
+                num_classes=self.sem_seg_head.num_classes,
+                feature_dim=self.cfg.MODEL.SEM_SEG_HEAD.MASK_DIM,
+                momentum=self.tcpm_cfg.MOMENTUM,
+                temperature=self.tcpm_cfg.TEMPERATURE,
+                max_samples_per_class=self.tcpm_cfg.MAX_SAMPLES_PER_CLASS,
+                hard_negative_margin=self.tcpm_cfg.HARD_NEGATIVE_MARGIN,
+                stem_class=self.stem_class,
+                leaf_class=self.leaf_class,
+            )
+
+        if self.bazr_aux_enabled:
+            # Keep the global RNG stream identical to the pure TCPM ablation.
+            with torch.random.fork_rng(devices=[]):
+                auxiliary_seed = max(int(self.cfg.SEED), 0) + 1907
+                torch.manual_seed(auxiliary_seed)
+                num_classes = self.sem_seg_head.num_classes
+                self.bazr_high_head = nn.Conv2d(
+                    self.cfg.MODEL.SEM_SEG_HEAD.MASK_DIM,
+                    num_classes,
+                    kernel_size=1,
+                )
+                self.bazr_low_head = nn.Conv2d(
+                    self.cfg.MODEL.SEM_SEG_HEAD.CONVS_DIM,
+                    num_classes,
+                    kernel_size=1,
+                )
+                self.bazr_gate = BAZRFusionGate(
+                    num_classes,
+                    hidden_dim=self.bazr_cfg.GATE_HIDDEN_DIM,
+                )
 
         if not self.semantic_on:
             assert self.sem_seg_postprocess_before_inference
@@ -315,6 +370,357 @@ class MaskFormer(nn.Module):
 
         self.ema_sem_seg_head.load_state_dict(new_teacher_dict)
 
+    def _run_head_on_images(self, image_tensors, return_features=False):
+        normalized = [
+            (image.to(self.device) - self.pixel_mean) / self.pixel_std
+            for image in image_tensors
+        ]
+        images = ImageList.from_tensors(normalized, self.size_divisibility)
+        features = self.backbone(images.tensor)
+        outputs = self.sem_seg_head(
+            features,
+            return_features=return_features,
+        )
+        return images, outputs
+
+    def _semantic_probabilities(self, outputs, size):
+        return query_semantic_probabilities(
+            outputs["pred_logits"],
+            outputs["pred_masks"],
+            size=size,
+        )
+
+    @torch.no_grad()
+    def generate_ssl_targets(self, batched_inputs):
+        """Generate legacy or TRPL targets without changing the old forward API."""
+        image_tensors = [sample["image"].to(self.device) for sample in batched_inputs]
+        base_height = max(image.shape[-2] for image in image_tensors)
+        base_width = max(image.shape[-1] for image in image_tensors)
+        target_size = (base_height, base_width)
+
+        scales = [float(scale) for scale in self.trpl_cfg.VIEW_SCALES]
+        if 1.0 not in scales:
+            scales.insert(0, 1.0)
+        view_probabilities = []
+        primary_outputs = None
+        for scale in scales:
+            if scale == 1.0:
+                scaled_images = image_tensors
+            else:
+                scaled_images = [
+                    F.interpolate(
+                        image.unsqueeze(0).float(),
+                        scale_factor=scale,
+                        mode="bilinear",
+                        align_corners=False,
+                        recompute_scale_factor=False,
+                    ).squeeze(0)
+                    for image in image_tensors
+                ]
+            _, outputs = self._run_head_on_images(scaled_images)
+            if scale == 1.0:
+                primary_outputs = outputs
+            view_probabilities.append(
+                self._semantic_probabilities(outputs, target_size)
+            )
+
+        legacy_targets = self.prepare_ssl_outputs(primary_outputs)
+        if not self.trpl_enabled:
+            return {"pseudo_label": legacy_targets}
+
+        trpl_targets = build_trpl_targets(
+            view_probabilities,
+            class_thresholds=self.trpl_cfg.CLASS_THRESHOLDS,
+            uncertainty_temperature=self.trpl_cfg.UNCERTAINTY_TEMPERATURE,
+            uncertainty_weight=self.trpl_cfg.UNCERTAINTY_WEIGHT,
+            max_uncertainty=self.trpl_cfg.MAX_UNCERTAINTY,
+            stem_class=self.stem_class,
+            skeleton_threshold=self.trpl_cfg.SKELETON_THRESHOLD,
+            persistence=self.trpl_cfg.PERSISTENCE,
+            skeleton_iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+            boundary_radius=self.trpl_cfg.BOUNDARY_RADIUS,
+            core_strategy=self.tcpm_cfg.CORE_STRATEGY,
+            core_erode_iterations=self.trpl_cfg.CORE_ERODE_ITERATIONS,
+            core_stem_radius=self.trpl_cfg.CORE_STEM_RADIUS,
+        )
+        return {
+            "pseudo_label": legacy_targets,
+            "trpl": trpl_targets,
+        }
+
+    def _padded_semantic_targets(self, batched_inputs, size):
+        labels = torch.full(
+            (len(batched_inputs), size[0], size[1]),
+            255,
+            device=self.device,
+            dtype=torch.long,
+        )
+        for index, sample in enumerate(batched_inputs):
+            semantic = sample["sem_seg"].to(self.device)
+            height = min(semantic.shape[-2], size[0])
+            width = min(semantic.shape[-1], size[1])
+            labels[index, :height, :width] = semantic[:height, :width]
+        return labels
+
+    def _domain_ids(self, batched_inputs):
+        return [
+            int(sample.get("domain_id", 0)) % int(self.tcpm_cfg.NUM_DOMAINS)
+            for sample in batched_inputs
+        ]
+
+    def _heldout_domain(self):
+        if not self.tcpm_cfg.HELDOUT_ENABLED:
+            return None
+        period = max(int(self.tcpm_cfg.HOLDOUT_PERIOD), 1)
+        return (self.iter // period) % int(self.tcpm_cfg.NUM_DOMAINS)
+
+    def _prototype_losses(
+        self,
+        outputs,
+        labels,
+        weights,
+        core_mask,
+        batched_inputs,
+    ):
+        losses = self.prototype_memory(
+            outputs["mask_features"],
+            labels,
+            weights,
+            core_mask,
+            self._domain_ids(batched_inputs),
+            heldout_domain=self._heldout_domain(),
+            update_memory=True,
+        )
+        return {
+            "loss_tcpm_contrastive": (
+                losses["contrastive"]
+                * float(self.tcpm_cfg.CONTRASTIVE_WEIGHT)
+            ),
+            "loss_tcpm_domain": (
+                losses["domain_compact"]
+                * float(self.tcpm_cfg.DOMAIN_COMPACT_WEIGHT)
+            ),
+            "loss_tcpm_hard_negative": (
+                losses["hard_negative"]
+                * float(self.tcpm_cfg.HARD_NEGATIVE_WEIGHT)
+            ),
+        }
+
+    def _bazr_logits(self, outputs, size):
+        if not self.bazr_aux_enabled:
+            return None
+        high_features = outputs["mask_features"]
+        low_features = outputs["multi_scale_features"][0]
+        if self.training:
+            high_features = high_features.detach()
+            low_features = low_features.detach()
+        high = self.bazr_high_head(high_features)
+        low = self.bazr_low_head(low_features)
+        high = F.interpolate(
+            high,
+            size=size,
+            mode="bilinear",
+            align_corners=False,
+        )
+        low = F.interpolate(
+            low,
+            size=size,
+            mode="bilinear",
+            align_corners=False,
+        )
+        return high, low
+
+    def _bazr_fused_probabilities(self, auxiliary):
+        high, low = auxiliary
+        high_probabilities = F.softmax(high.float(), dim=1)
+        low_probabilities = F.softmax(low.float(), dim=1)
+        gate = self.bazr_gate(
+            low_probabilities,
+            high_probabilities,
+        )
+        return (
+            gate * high_probabilities
+            + (1.0 - gate) * low_probabilities
+        )
+
+    def _supervised_topowheat_losses(
+        self,
+        outputs,
+        batched_inputs,
+        target_size,
+    ):
+        losses = {}
+        labels = self._padded_semantic_targets(batched_inputs, target_size)
+        valid = labels.ne(255)
+        safe_labels = labels.masked_fill(~valid, 0)
+        probabilities = self._semantic_probabilities(outputs, target_size)
+
+        if self.trpl_enabled:
+            stem_probability = probabilities[
+                :, self.stem_class : self.stem_class + 1
+            ]
+            stem_target = safe_labels.eq(self.stem_class).unsqueeze(1)
+            losses["loss_trpl_topology_sup"] = (
+                soft_cldice_loss(
+                    stem_probability,
+                    stem_target,
+                    valid=valid.unsqueeze(1),
+                    iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+                )
+                * float(self.trpl_cfg.SUPERVISED_TOPOLOGY_WEIGHT)
+            )
+
+        if self.tcpm_enabled:
+            core_mask = build_core_mask(
+                safe_labels,
+                valid,
+                num_classes=self.sem_seg_head.num_classes,
+                stem_class=self.stem_class,
+                strategy=self.tcpm_cfg.CORE_STRATEGY,
+                erode_iterations=self.trpl_cfg.CORE_ERODE_ITERATIONS,
+                stem_radius=self.trpl_cfg.CORE_STEM_RADIUS,
+                skeleton_iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+            )
+            losses.update(
+                self._prototype_losses(
+                    outputs,
+                    safe_labels,
+                    valid.float(),
+                    core_mask,
+                    batched_inputs,
+                )
+            )
+
+        auxiliary = self._bazr_logits(outputs, target_size)
+        if auxiliary is not None:
+            auxiliary_loss = sum(
+                F.cross_entropy(logits, labels, ignore_index=255)
+                for logits in auxiliary
+            ) / len(auxiliary)
+            fused_probabilities = self._bazr_fused_probabilities(auxiliary)
+            fusion_loss = masked_nll_loss(
+                fused_probabilities,
+                safe_labels,
+                valid.float(),
+                valid,
+            )
+            losses["loss_bazr_aux_sup"] = (
+                (
+                    auxiliary_loss
+                    + fusion_loss
+                    * float(self.bazr_cfg.FUSION_LOSS_WEIGHT)
+                )
+                * float(self.bazr_cfg.AUX_LOSS_WEIGHT)
+            )
+        return losses
+
+    def _semi_supervised_topowheat_losses(
+        self,
+        outputs,
+        batched_inputs,
+        target,
+    ):
+        labels = target["labels"].to(self.device)
+        weights = target["weights"].to(self.device)
+        reliable = target["reliable"].to(self.device)
+        stable_skeleton = target["stable_skeleton"].to(self.device)
+        core_mask = target["core_mask"].to(self.device)
+        target_size = labels.shape[-2:]
+        probabilities = self._semantic_probabilities(outputs, target_size)
+
+        losses = {}
+        region_nll = masked_nll_loss(
+            probabilities,
+            labels,
+            weights,
+            reliable,
+        )
+        region_dice = masked_dice_loss(
+            probabilities,
+            labels,
+            weights,
+            reliable,
+            num_classes=self.sem_seg_head.num_classes,
+        )
+        losses["loss_trpl_region_ssl"] = (
+            region_nll
+            + float(self.trpl_cfg.DICE_LOSS_WEIGHT) * region_dice
+        ) * float(self.trpl_cfg.REGION_LOSS_WEIGHT)
+
+        student_stem = probabilities[
+            :, self.stem_class : self.stem_class + 1
+        ]
+        teacher_stem = labels.eq(self.stem_class).unsqueeze(1)
+        topology_valid = (
+            reliable | stable_skeleton
+        ).unsqueeze(1)
+        losses["loss_trpl_topology_ssl"] = (
+            soft_cldice_loss(
+                student_stem,
+                teacher_stem,
+                valid=topology_valid,
+                iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+            )
+            * float(self.trpl_cfg.TOPOLOGY_LOSS_WEIGHT)
+        )
+        student_skeleton = soft_skeletonize(
+            student_stem,
+            iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+        )
+        skeleton_target = stable_skeleton.unsqueeze(1).float()
+        skeleton_intersection = (student_skeleton * skeleton_target).sum()
+        skeleton_dice = 1.0 - (
+            2.0 * skeleton_intersection + 1.0
+        ) / (
+            student_skeleton.sum() + skeleton_target.sum() + 1.0
+        )
+        losses["loss_trpl_skeleton_ssl"] = (
+            skeleton_dice * float(self.trpl_cfg.SKELETON_LOSS_WEIGHT)
+        )
+
+        if self.tcpm_enabled:
+            prototype_losses = self._prototype_losses(
+                outputs,
+                labels,
+                weights,
+                core_mask,
+                batched_inputs,
+            )
+            losses.update(
+                {
+                    key + "_ssl": value
+                    for key, value in prototype_losses.items()
+                }
+            )
+
+        auxiliary = self._bazr_logits(outputs, target_size)
+        if auxiliary is not None:
+            auxiliary_region = sum(
+                masked_nll_loss(
+                    F.softmax(logits, dim=1),
+                    labels,
+                    weights,
+                    reliable,
+                )
+                for logits in auxiliary
+            ) / len(auxiliary)
+            fused_probabilities = self._bazr_fused_probabilities(auxiliary)
+            fusion_loss = masked_nll_loss(
+                fused_probabilities,
+                labels,
+                weights,
+                reliable,
+            )
+            losses["loss_bazr_aux_ssl"] = (
+                (
+                    auxiliary_region
+                    + fusion_loss
+                    * float(self.bazr_cfg.FUSION_LOSS_WEIGHT)
+                )
+                * float(self.bazr_cfg.AUX_LOSS_WEIGHT)
+            )
+        return losses
+
     def prepare_ssl_outputs(self, targets, thresh_class = .7, thresh_mask=.95, mask_size = 5):
         new_outputs = []
         with torch.no_grad():
@@ -413,7 +819,13 @@ class MaskFormer(nn.Module):
             images = ImageList.from_tensors(images, self.size_divisibility)
 
             features = self.backbone(images.tensor)
-            outputs = self.sem_seg_head(features)
+            need_topowheat_features = (
+                self.tcpm_enabled or self.bazr_aux_enabled
+            )
+            outputs = self.sem_seg_head(
+                features,
+                return_features=need_topowheat_features,
+            )
 
             if return_preds:
                 return outputs
@@ -435,12 +847,32 @@ class MaskFormer(nn.Module):
                     else:
                         # remove this loss if not specified in `weight_dict`
                         losses.pop(k)
-                self.iter += 1
                 losses_all.update(losses)
+                if (
+                    self.trpl_enabled
+                    or self.tcpm_enabled
+                    or self.bazr_aux_enabled
+                ):
+                    losses_all.update(
+                        self._supervised_topowheat_losses(
+                            outputs,
+                            batched_inputs,
+                            images.tensor.shape[-2:],
+                        )
+                    )
+                if not (
+                    self.do_ssl
+                    and (self.trpl_enabled or self.tcpm_enabled)
+                ):
+                    self.iter += 1
                 return losses_all
             else:
                 mask_cls_results = outputs["pred_logits"]
                 mask_pred_results = outputs["pred_masks"]
+                bazr_aux_results = self._bazr_logits(
+                    outputs,
+                    images.tensor.shape[-2:],
+                )
                 # upsample masks
                 mask_pred_results = F.interpolate(
                     mask_pred_results,
@@ -472,6 +904,25 @@ class MaskFormer(nn.Module):
                             r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
                         processed_results[-1]["sem_seg"] = r
 
+                    if bazr_aux_results is not None:
+                        high_aux, low_aux = bazr_aux_results
+                        processed_results[-1]["_bazr_aux_high"] = (
+                            retry_if_cuda_oom(sem_seg_postprocess)(
+                                high_aux[len(processed_results) - 1],
+                                image_size,
+                                height,
+                                width,
+                            )
+                        )
+                        processed_results[-1]["_bazr_aux_low"] = (
+                            retry_if_cuda_oom(sem_seg_postprocess)(
+                                low_aux[len(processed_results) - 1],
+                                image_size,
+                                height,
+                                width,
+                            )
+                        )
+
                     # panoptic segmentation inference
                     if self.panoptic_on:
                         panoptic_r = retry_if_cuda_oom(self.panoptic_inference)(mask_cls_result, mask_pred_result)
@@ -492,23 +943,67 @@ class MaskFormer(nn.Module):
             # Student predictions.
             # First perturbation stream.
             features = self.backbone(images_unl)
-            outputs = self.sem_seg_head(features)
-            
-            losses = self.ssl_criterion(outputs, batched_inputs['pseudo_label'])
+            need_topowheat_features = (
+                self.tcpm_enabled or self.bazr_aux_enabled
+            )
+            outputs = self.sem_seg_head(
+                features,
+                return_features=need_topowheat_features,
+            )
 
-            for k in list(losses.keys()):
-                if k in self.ssl_criterion.weight_dict:
-                    losses[k] *= self.ssl_criterion.weight_dict[k]
-                else:
-                    # remove this loss if not specified in `weight_dict`
-                    losses.pop(k)
+            if self.trpl_enabled and "trpl" in batched_inputs:
+                losses_all.update(
+                    self._semi_supervised_topowheat_losses(
+                        outputs,
+                        batched_inputs["data"],
+                        batched_inputs["trpl"],
+                    )
+                )
+                legacy_weight = float(
+                    self.trpl_cfg.LEGACY_QUERY_LOSS_WEIGHT
+                )
+                if legacy_weight > 0:
+                    legacy_losses = self.ssl_criterion(
+                        outputs,
+                        batched_inputs["pseudo_label"],
+                    )
+                    for key in list(legacy_losses.keys()):
+                        if key in self.ssl_criterion.weight_dict:
+                            legacy_losses[key] *= (
+                                self.ssl_criterion.weight_dict[key]
+                                * legacy_weight
+                            )
+                        else:
+                            legacy_losses.pop(key)
+                    losses_all.update(
+                        {
+                            key + "_legacy_ssl": value
+                            for key, value in legacy_losses.items()
+                        }
+                    )
+            else:
+                losses = self.ssl_criterion(
+                    outputs,
+                    batched_inputs["pseudo_label"],
+                )
 
-            losses_ssl = {}
-            for k, v in losses.items():
-                losses_ssl[k + "_ssl"] = 2.0*v
-            losses_ssl['thresh_class_ssl'] = torch.tensor(self.thresh_class)
-            
-            losses_all.update(losses_ssl)
+                for k in list(losses.keys()):
+                    if k in self.ssl_criterion.weight_dict:
+                        losses[k] *= self.ssl_criterion.weight_dict[k]
+                    else:
+                        # remove this loss if not specified in `weight_dict`
+                        losses.pop(k)
+
+                losses_ssl = {}
+                for k, v in losses.items():
+                    losses_ssl[k + "_ssl"] = 2.0*v
+                losses_ssl['thresh_class_ssl'] = torch.tensor(
+                    self.thresh_class,
+                    device=self.device,
+                )
+                losses_all.update(losses_ssl)
+            if self.do_ssl and (self.trpl_enabled or self.tcpm_enabled):
+                self.iter += 1
         
         return losses_all
 

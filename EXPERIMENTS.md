@@ -17,6 +17,10 @@ inside the pixel decoder. The experiment configs now separate the stages:
 | `competition_stage2_stem4500.yaml` | 99 | prior stem-aware 4,500 | SAPA | off |
 | `competition_stage2_random4500.yaml` | 99 | random balanced 4,500 | SAPA | off |
 | `competition_stage2_all.yaml` | 99 | 64,368 | SAPA | off |
+| `competition_topowheat_trpl.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL | off |
+| `competition_topowheat_trpl_tcpm.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL + TCPM | off |
+| `competition_topowheat_bazr_train.yaml` | 99 | prior stem-aware 4,500 | full training-time method | off |
+| `competition_topowheat_bazr.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL + TCPM | BAZR |
 
 TTA must remain disabled in training ablations. Evaluate the zoom-in/multi-scale
 stage separately so training improvements are not mixed with inference cost.
@@ -25,8 +29,9 @@ The upstream repository omits `maskformer2_mmseg.yaml`. The local replacement
 copied from `maskformer2_R50_bs16_90k.yaml` is retained only as the common
 Mask2Former semantic-segmentation structure. Stage-specific settings are
 declared explicitly in
-`beit_adapter/maskformer2_beit_adapter_large_bas8_20k.yaml`: 16 images per
-batch, 20,000 iterations, validation-set evaluation, TTA off, and SSL off.
+`beit_adapter/maskformer2_beit_adapter_large_bas8_20k.yaml`, while the
+competition experiment files explicitly use a global batch of 2, 20,000
+iterations for Stage 1, validation-set evaluation, TTA off, and SSL off.
 This prevents the copied parent's effective defaults (batch 8, 15,000
 iterations, training-set evaluation, and TTA on) from silently controlling
 Stage 1.
@@ -163,3 +168,6 @@ For paper tables, run the final controlled configurations with at least three
 fixed seeds and report mean and standard deviation. Keep the validation and
 test assignments unchanged across the baseline, original method, and all new
 modules.
+
+TopoWheat training and paired global/BAZR evaluation commands are documented
+in `TOPOWHEAT.md`.

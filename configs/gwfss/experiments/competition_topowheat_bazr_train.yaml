@@ -1,0 +1,8 @@
+_BASE_: competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    BAZR:
+      # Train detached high/low heads without enabling selective zoom in eval.
+      ENABLED: False
+      AUX_HEADS_ENABLED: True

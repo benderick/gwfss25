@@ -1,0 +1,14 @@
+_BASE_: competition_stage2_stem4500.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TRPL:
+      ENABLED: True
+      VIEW_SCALES: [1.0, 0.75]
+      CLASS_THRESHOLDS: [0.70, 0.70, 0.55, 0.70]
+      LEGACY_QUERY_LOSS_WEIGHT: 0.0
+    TCPM:
+      ENABLED: False
+    BAZR:
+      ENABLED: False
+      AUX_HEADS_ENABLED: False

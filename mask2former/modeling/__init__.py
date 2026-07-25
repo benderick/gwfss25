@@ -4,6 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+# Newer timm versions access torch.fx during module import, while PyTorch 1.9
+# does not expose it as an attribute until the submodule is imported.
+import torch.fx  # noqa: F401
+
 from .backbone.swin import D2SwinTransformer
 from .pixel_decoder.fpn import BasePixelDecoder
 from .pixel_decoder.msdeformattn import MSDeformAttnPixelDecoder

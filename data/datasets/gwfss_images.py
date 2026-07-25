@@ -10,6 +10,7 @@ import os
 
 from .. import DatasetCatalog, MetadataCatalog
 from .gwfss_semantic import GWFSS_CATEGORIES
+from .gwfss_domains import infer_gwfss_domain
 from detectron2.utils.file_io import PathManager
 # from projects.GeneSSIS.data_perc import _RAW_CITYSCAPES_PANOPTIC_SPLITS
 """
@@ -119,10 +120,13 @@ def load_gwfss_unlabel(
     ret = []
     for image_file, in files:
         relative_stem = os.path.splitext(os.path.relpath(image_file, image_dir))[0]
+        domain_id, domain_name = infer_gwfss_domain(image_file)
         ret.append(
             {
                 "file_name": image_file,
                 "image_id": relative_stem.replace(os.sep, "__"),
+                "domain_id": domain_id,
+                "domain_name": domain_name,
                 # "sem_seg_file_name": '',
                 # "pan_seg_file_name": '',
                 # "segments_info": {'s':[]},

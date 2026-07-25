@@ -28,6 +28,7 @@ from .data.dataset_mappers.mask_former_image_dataset_mapper import MaskFormerIma
 # models
 from .maskformer_model import MaskFormer
 from .test_time_augmentation import SemanticSegmentorWithTTA
+from .topowheat import BrokenAwareZoomRefiner
 
 # evaluation
 from .evaluation.instance_evaluation import InstanceSegEvaluator

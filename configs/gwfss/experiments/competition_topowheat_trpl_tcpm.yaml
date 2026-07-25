@@ -1,0 +1,11 @@
+_BASE_: competition_topowheat_trpl.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      ENABLED: True
+      NUM_DOMAINS: 9
+      HOLDOUT_PERIOD: 1000
+    BAZR:
+      ENABLED: False
+      AUX_HEADS_ENABLED: False

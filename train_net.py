@@ -66,6 +66,7 @@ from mask2former import (
     MaskFormerSemanticDatasetMapper,
     ImageDatasetMapper,
     MaskFormerImageDatasetMapper,
+    BrokenAwareZoomRefiner,
     SemanticSegmentorWithTTA,
     add_maskformer2_config,
 )
@@ -75,6 +76,15 @@ class Trainer(DefaultTrainer):
     """
     Extension of the Trainer class adapted to MaskFormer.
     """
+
+    @classmethod
+    def test(cls, cfg, model, evaluators=None):
+        if (
+            cfg.MODEL.TOPOWHEAT.BAZR.ENABLED
+            and not isinstance(model, BrokenAwareZoomRefiner)
+        ):
+            model = BrokenAwareZoomRefiner(cfg, model)
+        return super().test(cfg, model, evaluators)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
@@ -350,6 +360,25 @@ def setup(args):
     add_maskformer2_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+
+    if (
+        cfg.MODEL.TOPOWHEAT.TCPM.ENABLED
+        and not cfg.MODEL.TOPOWHEAT.TRPL.ENABLED
+    ):
+        raise ValueError("TCPM requires TRPL reliable core targets")
+    if cfg.MODEL.TOPOWHEAT.TCPM.CORE_STRATEGY not in {
+        "reliable",
+        "eroded",
+        "topology",
+    }:
+        raise ValueError("Unknown TCPM prototype core strategy")
+    if (
+        cfg.MODEL.TOPOWHEAT.BAZR.ENABLED
+        and not cfg.MODEL.TOPOWHEAT.BAZR.AUX_HEADS_ENABLED
+    ):
+        raise ValueError("BAZR requires BAZR.AUX_HEADS_ENABLED")
+    if cfg.MODEL.TOPOWHEAT.BAZR.ENABLED and cfg.TEST.AUG.ENABLED:
+        raise ValueError("Evaluate BAZR and dense TTA in separate runs")
 
     # Update dataloader for SSL case.
     if cfg.SSL.PERCENTAGE != 100:

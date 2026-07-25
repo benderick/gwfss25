@@ -163,7 +163,7 @@ class BEiTAdapterLargeBackbone(Backbone):
                                  cffn_ratio=0.25,
                                  deform_ratio=0.5,
                                  with_cp=False,  # set with_cp=True to save memory
-                                 interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],).train().cuda()
+                                 interaction_indexes=[[0, 5], [6, 11], [12, 17], [18, 23]],).train()
         self.qkv_out = None
         self.token_size = 16
         self.factors = {

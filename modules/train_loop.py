@@ -681,6 +681,23 @@ class SimpleTrainerSSL(TrainerBase):
         self.update_ema_module(self.model, self.model_teacher, 
                                ema_decay=ema_decay)
 
+    def build_ssl_batch(self, data_unl):
+        teacher_model = _unwrap_model(self.model_teacher)
+        with torch.no_grad():
+            if teacher_model.trpl_enabled:
+                ssl_targets = teacher_model.generate_ssl_targets(data_unl)
+            else:
+                teacher_preds = self.model_teacher(
+                    data_unl,
+                    return_preds=True,
+                )
+                ssl_targets = {
+                    "pseudo_label": teacher_model.prepare_ssl_outputs(
+                        teacher_preds
+                    )
+                }
+        return {"data": data_unl, **ssl_targets}
+
 
     def run_step(self):
         """
@@ -689,6 +706,9 @@ class SimpleTrainerSSL(TrainerBase):
         assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
         student_model = _unwrap_model(self.model)
         teacher_model = _unwrap_model(self.model_teacher)
+        if student_model.trpl_enabled or student_model.tcpm_enabled:
+            student_model.iter = self.iter
+            teacher_model.iter = self.iter
         start = time.perf_counter()
         """
         If you want to do something with the data, you can wrap the dataloader.
@@ -719,10 +739,6 @@ class SimpleTrainerSSL(TrainerBase):
         If you want to do something with the losses, you can wrap the model.
         """
         
-        with torch.no_grad():
-            teacher_preds = self.model_teacher(data_unl, return_preds=True)
-        teacher_pl = teacher_model.prepare_ssl_outputs(teacher_preds)
-
         loss_dict = self.model(data, branch='supervised')
         if isinstance(loss_dict, torch.Tensor):
             losses = loss_dict
@@ -730,7 +746,7 @@ class SimpleTrainerSSL(TrainerBase):
         else:
             losses = sum(loss_dict.values())
         
-        data_ssl = {'data': data_unl, 'pseudo_label': teacher_pl}
+        data_ssl = self.build_ssl_batch(data_unl)
         
         loss_dict_unl = self.model(data_ssl, branch = 'semi-supervised')
         if isinstance(loss_dict_unl, torch.Tensor):
@@ -931,6 +947,9 @@ class AMPTrainerSSL(SimpleTrainerSSL):
 
         student_model = _unwrap_model(self.model)
         teacher_model = _unwrap_model(self.model_teacher)
+        if student_model.trpl_enabled or student_model.tcpm_enabled:
+            student_model.iter = self.iter
+            teacher_model.iter = self.iter
         start = time.perf_counter()
         if student_model.do_ssl and student_model.iter % student_model.ssl_freq == 0:
             data_unl = next(self._data_loader_unl_iter)
@@ -951,12 +970,7 @@ class AMPTrainerSSL(SimpleTrainerSSL):
             self.update_teacher_model(ema_decay=teacher_model.ema_decay)
     
 
-        with torch.no_grad():
-            teacher_preds = self.model_teacher(data_unl, return_preds=True)
-        teacher_pl = teacher_model.prepare_ssl_outputs(teacher_preds)
-        del teacher_preds
-        
-        data_ssl = {'data': data_unl, 'pseudo_label': teacher_pl} 
+        data_ssl = self.build_ssl_batch(data_unl)
 
         "Get pseudo-labels from teacher model."
         # with autocast(dtype=self.precision):
