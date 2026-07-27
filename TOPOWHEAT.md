@@ -27,16 +27,24 @@ testing a hybrid with the released hard query pseudo-label loss.
 
 `MODEL.TOPOWHEAT.TCPM.ENABLED` adds a topology-core prototype memory. Stem
 prototypes use the persistent skeleton and its narrow neighbourhood; other
-classes use eroded reliable interiors. The memory stores class prototypes per
-source domain and derives global prototypes while excluding the rotating
-held-out domain.
+classes use eroded reliable interiors. Labelled and pseudo-labelled cores are
+stored in separate class-by-domain banks. For each sample, the loss reads an
+anchor aggregated from every available domain except that sample's own
+domain; all eligible domains continue to update on every iteration.
 
 The module contributes prototype contrastive, domain compactness, and
-stem-versus-leaf hard-negative losses. Prototype buffers are synchronized
-across distributed workers and saved in normal Detectron2 checkpoints.
-`CORE_STRATEGY` selects `reliable`, `eroded`, or `topology` pixels for the
-prototype ablation, while `HELDOUT_ENABLED` controls the rotating held-out
-domain experiment.
+stem-versus-leaf hard-negative losses at the sample core-centroid level.
+Prototype buffers are synchronized across distributed workers and saved in
+normal Detectron2 checkpoints. Old single-bank experimental checkpoints are
+loaded into the labelled bank for compatibility.
+
+The default competition schedule starts TCPM at iteration 20,000. It warms the
+labelled bank for 5,000 iterations, ramps the losses for 10,000 iterations,
+then admits pseudo cores with confidence at least 0.8 and ramps their anchor
+contribution to 0.2. `CORE_STRATEGY` selects `reliable`, `eroded`, or
+`topology` evidence; `LEAVE_ONE_DOMAIN_OUT` controls per-sample domain
+exclusion. TensorBoard logs `tcpm/labeled_drift`, `tcpm/pseudo_drift`,
+`tcpm/loss_scale`, and `tcpm/pseudo_blend` for the prototype analysis.
 
 The competition's anonymous domains are aligned with the named unlabelled
 folders as follows: domain1--domain9 correspond to CIMMYT, ETHZ, INRAE, NJAU,
@@ -95,6 +103,12 @@ CONFIG_FILE=configs/gwfss/experiments/competition_topowheat_trpl_tcpm.yaml \
 OUTPUT_DIR=outputs/competition_topowheat_trpl_tcpm_seed2025 \
 bash topowheat_train.sh
 ```
+
+TCPM component ablations have dedicated configs under
+`configs/gwfss/experiments/ablations/`. They cover reliable cores, eroded
+cores, immediate activation, labelled-only memory, and removal of per-sample
+leave-one-domain-out. The existing `competition_topowheat_trpl.yaml` is the
+no-prototype row, and `competition_topowheat_trpl_tcpm.yaml` is the full row.
 
 Evaluate one checkpoint on validation with one global forward:
 

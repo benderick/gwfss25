@@ -1,0 +1,6 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      LEAVE_ONE_DOMAIN_OUT: False

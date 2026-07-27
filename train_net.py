@@ -372,6 +372,30 @@ def setup(args):
         "topology",
     }:
         raise ValueError("Unknown TCPM prototype core strategy")
+    if cfg.MODEL.TOPOWHEAT.TCPM.ENABLED:
+        tcpm = cfg.MODEL.TOPOWHEAT.TCPM
+        start_iter = (
+            cfg.SSL.BURNIN_ITER
+            if int(tcpm.START_ITER) < 0
+            else int(tcpm.START_ITER)
+        )
+        pseudo_start = (
+            start_iter
+            + int(tcpm.MEMORY_WARMUP_ITERS)
+            + int(tcpm.LOSS_RAMP_ITERS)
+            if int(tcpm.PSEUDO_UPDATE_START) < 0
+            else int(tcpm.PSEUDO_UPDATE_START)
+        )
+        if start_iter < cfg.SSL.BURNIN_ITER:
+            raise ValueError("TCPM must not start before the SSL burn-in")
+        if pseudo_start < start_iter:
+            raise ValueError("TCPM pseudo memory must not start before TCPM")
+        if int(tcpm.MIN_CORE_PIXELS) < 1:
+            raise ValueError("TCPM.MIN_CORE_PIXELS must be positive")
+        if not 0.0 <= float(tcpm.PSEUDO_BLEND_MAX) <= 1.0:
+            raise ValueError("TCPM.PSEUDO_BLEND_MAX must be in [0, 1]")
+        if not 0.0 <= float(tcpm.PSEUDO_MIN_WEIGHT) <= 1.0:
+            raise ValueError("TCPM.PSEUDO_MIN_WEIGHT must be in [0, 1]")
     if (
         cfg.MODEL.TOPOWHEAT.BAZR.ENABLED
         and not cfg.MODEL.TOPOWHEAT.BAZR.AUX_HEADS_ENABLED

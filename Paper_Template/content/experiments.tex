@@ -61,7 +61,7 @@ GWFSS 竞赛发布的少标注协议包含来自 9 个源域的 99 张像素级�
 
 基础网络由 BEiTv2-Large、ViT-Adapter 和 Mask2Former 构成 \citep{peng2022beitv2,chen2023vitadapter,cheng2022mask2former}。编码器采用 ImageNet-1K 预训练权重，输入裁剪尺寸为 $512\times512$。AdamW 优化器的解码器初始学习率为 $1\times10^{-4}$，编码器学习率乘子为 0.1，权重衰减为 0.05。监督预热和半监督联合训练分别执行 20,000 和 90,000 次迭代；联合训练的全局批大小为 2 张有标注图像和 2 张无标注图像。弱增强包括多尺度短边缩放、$512\times512$ 随机裁剪、SSD 颜色扰动和随机水平翻转，学生分支额外采用颜色抖动、随机灰度和高斯模糊。EMA 动量设为 0.9996，前 20,000 次联合训练迭代作为教师冻结阶段。
 
-\TRPL 使用原尺度与 0.75 倍尺度两个教师视图，背景、麦穗、茎秆和叶片的置信阈值依次为 0.70、0.70、0.55 和 0.70。不确定性权重 $\beta$ 和温度 $\tau_u$ 分别为 1.0 和 0.5，最大可接受不确定性为 0.75；骨架阈值、持续性阈值和边界半径分别为 0.35、0.5 和 2 像素。区域 Dice、拓扑和骨架一致性损失的权重依次为 0.5、0.5 和 0.25。\TCPM 使用 9 组域记忆，原型动量 $\mu$ 为 0.99，对比温度 $\tau_p$ 为 0.1，每类每次最多采样 256 个核心像素，留出域每 1,000 次迭代轮换一次。对比、域紧致和困难负样本损失的权重分别为 0.1、0.05 和 0.05。\BAZR 从步长为 128 的 $256\times256$ 候选窗口中选择 $K=4$ 个区域，将其放大到 $512\times512$，NMS 阈值设为 0.3；熵、异常端点、尺度分歧和茎秆概率的路由权重依次为 1.0、2.0、1.0 和 0.5。
+\TRPL 使用原尺度与 0.75 倍尺度两个教师视图，背景、麦穗、茎秆和叶片的置信阈值依次为 0.70、0.70、0.55 和 0.70。不确定性权重 $\beta$ 和温度 $\tau_u$ 分别为 1.0 和 0.5，最大可接受不确定性为 0.75；骨架阈值、持续性阈值和边界半径分别为 0.35、0.5 和 2 像素。区域 Dice、拓扑和骨架一致性损失的权重依次为 0.5、0.5 和 0.25。\TCPM 为 9 个源域维护有标注与伪标注两组类别记忆，动量 $\mu_L$ 和 $\mu_P$ 分别为 0.95 和 0.995。每个样本--类别核心在特征分辨率下至少包含 8 个像素，超过 256 个像素时进行均匀空间抽样；伪标注记忆还要求 $w\geq0.8$。联合训练到 20,000 次时启动并清空记忆，20,000--25,000 次只更新有标注记忆，25,000--35,000 次把原型损失线性升至设定权重，35,000 次起开放伪标注记忆，其融合比例在 10,000 次内由 0 增至 0.2。对比温度为 0.1，对比、域紧致和困难负样本项的最终权重分别为 0.02、0.01 和 0.005，困难负样本间隔为 0.1；每个质心读取原型时排除自身域。\BAZR 从步长为 128 的 $256\times256$ 候选窗口中选择 $K=4$ 个区域，将其放大到 $512\times512$，NMS 阈值设为 0.3；熵、异常端点、尺度分歧和茎秆概率的路由权重依次为 1.0、2.0、1.0 和 0.5。
 
 所有主结果采用 3 个固定随机种子报告均值与标准差。训练和推理在 NVIDIA A100 上完成，代码基于 PyTorch 1.9.0、CUDA 11.1 和 Detectron2 0.6 实现。
 
@@ -112,7 +112,7 @@ SegFormer-B1 \citep{wang2025gwfss} & 75.46 & 66.11 & 19.23 & 81.75 & 60.64 \\
 \end{tabular}}
 \end{table}
 
-在未知地域上，\METHOD 相对统一主干监督基线提高 mIoU \placeholder{X.XX} 个百分点，其中茎秆获得最大的类别增益 \placeholder{X.XX} 个百分点；背景和叶片分别变化 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点。类别间的不均匀增益与 \TCPM 的采样机制一致。大面积器官从收缩后的内部区域已能得到稳定原型，而像素稀少的茎秆从中心线核心中获益更明显，边界混合像素对其类别中心的牵引随之减弱。源域平均 mIoU 仅变化 \placeholder{X.XX} 个百分点，最差源域和未知域则分别提高 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点。这组差异进一步表明，原型约束主要改善了跨域稳定性，而非对易分源域提供一般性的容量增益。
+在未知地域上，\METHOD 相对统一主干监督基线提高 mIoU \placeholder{X.XX} 个百分点，其中茎秆获得最大的类别增益 \placeholder{X.XX} 个百分点；背景和叶片分别变化 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点。大面积器官从收缩内部已能获得稳定质心，像素稀少的茎秆则更依赖中心线核心，边界混合像素对其参照方向的牵引因而下降。更值得注意的是，源域平均 mIoU 只变化 \placeholder{X.XX} 个百分点，而最差源域和未知域分别提高 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点。若收益只是额外损失带来的正则化，容易区分的源域也应出现相近增幅；当前差异与逐样本排除自身域的训练压力更一致。原型轨迹还显示，课程启用后前 5,000 次的平均余弦漂移由立即启用时的 \placeholder{X.XXX} 降至 \placeholder{X.XXX}，说明性能变化伴随参照稳定性的改善，而不只是损失权重减小。
 
 \subsection{消融实验}
 \label{sec:ablation}
@@ -160,28 +160,31 @@ $\checkmark$ & $\checkmark$ & $\checkmark$ & \placeholder{XX.XX} & \placeholder{
 
 单纯采用熵过滤使接纳率由 \placeholder{XX.XX\%} 变为 \placeholder{XX.XX\%}，但中心线准确率只提高 \placeholder{X.XX} 个百分点，表明像素置信度无法充分区分边界模糊与位置错误。多视图分歧进一步排除了跨尺度不稳定区域，中心线准确率提高到 \placeholder{XX.XX\%}。完整 \TRPL 在保持 \placeholder{XX.XX\%} 接纳率的同时，将 Stem IoU 和 clDice 分别提高 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点，断裂组件数下降 \placeholder{XX.X\%}。接纳率并未与结构指标同步增加，说明收益来自监督证据的重新组织，而非简单扩大伪标签覆盖范围。
 
-\paragraph{原型来源与域泛化}
-原型消融逐步改变均值计算所使用的像素集合，并单独移除留一域模拟。除平均性能外，实验还记录最差源域 mIoU，以降低样本量和域难度差异对平均值的掩盖。不同原型证据的比较见\cref{tab:prototype-ablation}。
+\paragraph{原型证据、记忆稳定性与域泛化}
+这组实验先替换核心证据，再拆开课程启用、双记忆和逐样本留一域三个稳定化环节。除平均性能外，实验记录最差源域 mIoU 以及相邻更新间同类域原型的平均余弦漂移 $\Delta q$；后者越小，表示记忆受单批特征扰动越弱。结果列于\cref{tab:prototype-ablation}。
 
-\begin{table}[!htbp]
+\begin{table*}[!htbp]
 \centering
-\caption{原型证据来源与留一域训练的消融结果。最差源域 mIoU 为各源域独立评测结果中的最小值。}
+\caption{TCPM 的证据来源与稳定化机制消融。最差源域 mIoU 为各源域独立评测结果的最小值，$\Delta q$ 为相邻更新间类别--域原型的平均余弦距离。}
 \label{tab:prototype-ablation}
-\resizebox{\linewidth}{!}{
-\begin{tabular}{lccc}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}Xcccc}
 \toprule
-原型策略 & 验证 mIoU & 最差源域 mIoU & 测试 mIoU \\
+原型设置 & 验证 mIoU & 最差源域 mIoU & 测试 mIoU & $\Delta q$ \\
 \midrule
-无原型 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} \\
-完整高置信区域 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} \\
-收缩内部区域 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} \\
-拓扑核心，无留一域模拟 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} \\
-拓扑核心与留一域模拟（\TCPM） & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} \\
+无原型 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & -- \\
+完整高置信区域，其余设置同 TCPM & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
+收缩内部区域，其余设置同 TCPM & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
+拓扑核心，立即启用损失与伪标注记忆 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
+拓扑核心，课程启用且仅有标注记忆 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
+拓扑核心与双记忆，无逐样本留一域 & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
+完整 \TCPM & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{XX.XX} & \placeholder{X.XXX} \\
 \bottomrule
-\end{tabular}}
-\end{table}
+\end{tabularx}
+\end{table*}
 
-完整高置信区域原型的测试 mIoU 为 \placeholder{XX.XX\%}，去除边界像素后提高到 \placeholder{XX.XX\%}，证实混合边界会偏移类别中心。用器官特异的拓扑核心替代统一收缩区域后，最差源域和未知域 mIoU 又分别提高 \placeholder{X.XX} 和 \placeholder{X.XX} 个百分点；与此同时，茎秆域级原型到全局原型的平均距离由 \placeholder{X.XXX} 降至 \placeholder{X.XXX}，茎秆与叶片原型间距增加 \placeholder{X.XXX}。表示距离与分割性能的同向变化支持了“纯净结构核心收紧跨域类别分布”的解释。移除留一域模拟仅使源域均值变化 \placeholder{X.XX} 个百分点，却使未知域结果下降 \placeholder{X.XX} 个百分点，说明轮换留出主要作用于域外泛化，而不是常规源域拟合。
+完整高置信区域包含叶--茎接触边界，其测试 mIoU 为 \placeholder{XX.XX\%}；统一收缩后变为 \placeholder{XX.XX\%}，而器官特异的拓扑核心又使最差源域提高 \placeholder{X.XX} 个百分点。对应的茎秆质心到跨域参照的距离从 \placeholder{X.XXX} 降至 \placeholder{X.XXX}，茎秆--叶片间距增加 \placeholder{X.XXX}。这两项表示统计与类别性能同向变化，支持收益来自边界污染减弱，而不是采样像素数的偶然变化。
+
+立即施加损失时，学生分割头尚在快速改变特征坐标，记忆同时吸收伪标注，$\Delta q$ 达到 \placeholder{X.XXX}，验证 mIoU 比课程启用低 \placeholder{X.XX} 个百分点。先积累有标注记忆使漂移降至 \placeholder{X.XXX}；随后加入独立的伪标注记忆，未知域 mIoU 再变化 \placeholder{X.XX} 个百分点，而源域均值只变化 \placeholder{X.XX}。这一差异表明伪标注的主要作用是补充跨域外观，不应与人工标注共享同一条快速更新轨迹。最后，关闭逐样本留一域后，最差源域和未知域分别变化 \placeholder{X.XX} 与 \placeholder{X.XX} 个百分点；因为各域在两种设置中都持续更新，该对照排除了旧式冻结域造成的记忆新鲜度差异，更直接地检验了“禁止本域自匹配”是否提供域外训练压力。
 
 \paragraph{精细化策略的精度--效率权衡}
 所有精细化策略复用同一模型权重，性能变化仅来自计算位置和预算。实验以单尺度和密集滑窗作为两个计算端点，并比较仅熵路由与完整断裂感知路由。端点覆盖率表示被选窗口覆盖异常骨架端点的比例，路由结果及其延迟列于\cref{tab:routing-ablation}。
@@ -223,7 +226,7 @@ $\checkmark$ & $\checkmark$ & $\checkmark$ & \placeholder{XX.XX} & \placeholder{
 \centering
 %\includegraphics[width=0.96\linewidth]{figures/diagnostic_analysis.pdf}
 \fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
-\placeholder{机制诊断图横向分为 A、B、C 三个面板。面板 A 对同一无标注样本给出固定阈值伪标签、多视图不确定性、稳定中心线、忽略边界和离线真值；局部放大区域标记固定阈值删除的真实茎秆与 TRPL 排除的错误茎秆，底部列出接纳率和中心线准确率。面板 B 使用相同 UMAP 参数并排呈现无原型与拓扑核心原型的嵌入，点形状区分背景、麦穗、茎秆和叶片，颜色深浅区分采集域，大号标记表示域级与全局原型；右下角小图比较类内跨域距离和茎秆--叶片间距。面板 C 依次给出熵热图、端点热图、内部尺度差异、综合路由分数、Top-$K$ 窗口和融合结果，并并排呈现仅熵路由误选的叶片边界与完整路由命中的中等熵断茎。三个面板共享样本编号、类别颜色和箭头图例。}
+\placeholder{机制诊断图横向分为 A、B、C 三个等宽面板。面板 A 对同一无标注小麦样本依次给出固定阈值伪标签、对齐的多视图不确定性、稳定中心线、忽略边界和离线真值；所有子图共享同一红色局部框，框内用实心箭头标记固定阈值删除的真实细茎，用空心箭头标记 TRPL 排除的错误连接，底部对齐列出接纳率、中心线精确率和断裂组件数。面板 B 上排使用完全相同的 UMAP 拟合参数、坐标范围和抽样数量，对比立即启用原型与完整 TCPM：点形状编码四个器官类别，点颜色编码九个采集域，较大的实心标记表示有标注域原型，带白色中心的标记表示伪标注域原型，黑色描边星形表示逐样本留一域锚点；选择一个当前域，以半透明灰圈标出被排除的本域原型，并画线连接其质心与剩余域锚点。面板 B 下排给出训练迭代横轴上的原型余弦漂移曲线，在 20k、25k、35k 和 45k 处画竖虚线，同时并排绘制类内跨域距离及茎秆--叶片间距的带 95\% 置信区间箱线图。面板 C 从同一全局预测依次生成熵、异常端点、内部尺度差异和综合路由分数热图，所有热图保持像素对齐并覆盖同一候选网格；之后显示 Top-$K$/NMS 窗口、局部预测和门控融合结果，右下角用两个同尺度裁块对照仅熵路由误选的普通叶片边界与完整路由命中的中等熵断茎。三个面板共享类别配色、样本编号和箭头图例，图例置于底部独立空白带，不遮挡图像或坐标。}
 \vspace{1.05cm}}}
 \caption{可靠伪标签、跨域原型和结构风险路由的机制诊断。三个面板分别对应监督证据筛选、特征空间聚合和局部计算分配。}
 \label{fig:diagnostic}

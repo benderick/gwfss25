@@ -1,0 +1,7 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      # Keep the pseudo bank closed for the complete 90k training schedule.
+      PSEUDO_UPDATE_START: 90001

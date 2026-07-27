@@ -4,18 +4,49 @@ import torch.nn.functional as F
 from torch import nn
 
 
+def tcpm_curriculum_state(
+    current_iter,
+    start_iter,
+    memory_warmup_iters,
+    loss_ramp_iters,
+    pseudo_update_start,
+    pseudo_ramp_iters,
+    pseudo_blend_max,
+):
+    current_iter = int(current_iter)
+    start_iter = int(start_iter)
+    loss_start = start_iter + max(int(memory_warmup_iters), 0)
+    loss_ramp = max(int(loss_ramp_iters), 1)
+    loss_scale = min(max((current_iter - loss_start) / loss_ramp, 0.0), 1.0)
+
+    pseudo_start = int(pseudo_update_start)
+    if pseudo_start < 0:
+        pseudo_start = loss_start + loss_ramp
+    pseudo_ramp = max(int(pseudo_ramp_iters), 1)
+    pseudo_scale = min(max((current_iter - pseudo_start) / pseudo_ramp, 0.0), 1.0)
+    active = current_iter >= start_iter
+    return {
+        "active": active,
+        "loss_scale": loss_scale,
+        "pseudo_update": active and current_iter >= pseudo_start,
+        "pseudo_blend": pseudo_scale * float(pseudo_blend_max),
+    }
+
+
 class TopologyCorePrototypeMemory(nn.Module):
-    """Domain-aware class prototypes updated only from reliable organ cores."""
+    """Curriculum-stabilized domain prototypes built from topology cores."""
 
     def __init__(
         self,
         num_domains,
         num_classes,
         feature_dim,
-        momentum=0.99,
+        labeled_momentum=0.95,
+        pseudo_momentum=0.995,
         temperature=0.1,
         max_samples_per_class=256,
-        hard_negative_margin=0.2,
+        min_core_pixels=8,
+        hard_negative_margin=0.1,
         stem_class=2,
         leaf_class=3,
     ):
@@ -23,62 +54,168 @@ class TopologyCorePrototypeMemory(nn.Module):
         self.num_domains = int(num_domains)
         self.num_classes = int(num_classes)
         self.feature_dim = int(feature_dim)
-        self.momentum = float(momentum)
+        self.labeled_momentum = float(labeled_momentum)
+        self.pseudo_momentum = float(pseudo_momentum)
         self.temperature = float(temperature)
         self.max_samples_per_class = int(max_samples_per_class)
+        self.min_core_pixels = int(min_core_pixels)
         self.hard_negative_margin = float(hard_negative_margin)
         self.stem_class = int(stem_class)
         self.leaf_class = int(leaf_class)
 
-        self.register_buffer(
-            "prototypes",
-            torch.zeros(num_domains, num_classes, feature_dim),
-        )
-        self.register_buffer(
-            "initialized",
-            torch.zeros(num_domains, num_classes, dtype=torch.bool),
-        )
-
-    def _global_prototypes(self, heldout_domain):
-        valid = self.initialized.clone()
-        if heldout_domain is not None:
-            valid[int(heldout_domain) % self.num_domains] = False
-        weights = valid.float().unsqueeze(-1)
-        summed = (self.prototypes * weights).sum(dim=0)
-        counts = weights.sum(dim=0)
-        global_prototypes = summed / counts.clamp_min(1.0)
-        global_prototypes = F.normalize(global_prototypes, dim=-1)
-        return global_prototypes, counts.squeeze(-1).gt(0)
+        shape = (self.num_domains, self.num_classes, self.feature_dim)
+        flags = (self.num_domains, self.num_classes)
+        self.register_buffer("labeled_prototypes", torch.zeros(shape))
+        self.register_buffer("labeled_initialized", torch.zeros(flags, dtype=torch.bool))
+        self.register_buffer("pseudo_prototypes", torch.zeros(shape))
+        self.register_buffer("pseudo_initialized", torch.zeros(flags, dtype=torch.bool))
+        self.register_buffer("memory_started", torch.tensor(False, dtype=torch.bool))
+        self.register_buffer("last_labeled_drift", torch.tensor(0.0))
+        self.register_buffer("last_pseudo_drift", torch.tensor(0.0))
 
     @torch.no_grad()
-    def _update(self, sums, counts, heldout_domain):
+    def reset_memory(self):
+        self.labeled_prototypes.zero_()
+        self.labeled_initialized.zero_()
+        self.pseudo_prototypes.zero_()
+        self.pseudo_initialized.zero_()
+        self.last_labeled_drift.zero_()
+        self.last_pseudo_drift.zero_()
+        self.memory_started.fill_(True)
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        # Old experimental TCPM checkpoints used one bank. Treat it as the
+        # labelled bank so a resumed run does not silently discard it.
+        old_prototypes = state_dict.pop(prefix + "prototypes", None)
+        old_initialized = state_dict.pop(prefix + "initialized", None)
+        if old_prototypes is not None:
+            state_dict.setdefault(prefix + "labeled_prototypes", old_prototypes)
+        if old_initialized is not None:
+            state_dict.setdefault(prefix + "labeled_initialized", old_initialized)
+        defaults = {
+            "labeled_prototypes": self.labeled_prototypes,
+            "labeled_initialized": self.labeled_initialized,
+            "pseudo_prototypes": self.pseudo_prototypes,
+            "pseudo_initialized": self.pseudo_initialized,
+            "memory_started": self.memory_started,
+            "last_labeled_drift": self.last_labeled_drift,
+            "last_pseudo_drift": self.last_pseudo_drift,
+        }
+        for name, value in defaults.items():
+            state_dict.setdefault(prefix + name, value.detach().clone())
+        if old_initialized is not None and prefix + "memory_started" in state_dict:
+            state_dict[prefix + "memory_started"] = old_initialized.any().to(
+                dtype=torch.bool
+            )
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
+    def _aggregate_bank(self, prototypes, initialized, excluded_domain=None):
+        valid = initialized.clone()
+        if excluded_domain is not None:
+            valid[int(excluded_domain) % self.num_domains] = False
+        weights = valid.to(dtype=prototypes.dtype).unsqueeze(-1)
+        counts = weights.sum(dim=0)
+        aggregated = (prototypes * weights).sum(dim=0) / counts.clamp_min(1.0)
+        aggregated = F.normalize(aggregated, dim=-1)
+        return aggregated, counts.squeeze(-1).gt(0)
+
+    def _reference_prototypes(self, excluded_domain=None, pseudo_blend=0.0):
+        labeled, labeled_available = self._aggregate_bank(
+            self.labeled_prototypes,
+            self.labeled_initialized,
+            excluded_domain,
+        )
+        pseudo, pseudo_available = self._aggregate_bank(
+            self.pseudo_prototypes,
+            self.pseudo_initialized,
+            excluded_domain,
+        )
+        blend = min(max(float(pseudo_blend), 0.0), 1.0)
+        references = labeled.clone()
+        both = labeled_available & pseudo_available
+        if both.any() and blend > 0.0:
+            references[both] = F.normalize(
+                (1.0 - blend) * labeled[both] + blend * pseudo[both],
+                dim=-1,
+            )
+        return references, labeled_available
+
+    @torch.no_grad()
+    def _update_bank(self, sums, counts, source):
         if dist.is_available() and dist.is_initialized():
             dist.all_reduce(sums)
             dist.all_reduce(counts)
 
-        heldout = None
-        if heldout_domain is not None:
-            heldout = int(heldout_domain) % self.num_domains
+        if source == "labeled":
+            bank = self.labeled_prototypes
+            initialized = self.labeled_initialized
+            momentum = self.labeled_momentum
+        elif source == "pseudo":
+            bank = self.pseudo_prototypes
+            initialized = self.pseudo_initialized
+            momentum = self.pseudo_momentum
+        else:
+            raise ValueError("TCPM source must be 'labeled' or 'pseudo'")
+
+        drift_terms = []
         for domain_id in range(self.num_domains):
-            if domain_id == heldout:
-                continue
             for class_id in range(self.num_classes):
-                count = counts[domain_id, class_id]
-                if count <= 0:
+                if counts[domain_id, class_id] <= 0:
                     continue
-                prototype = sums[domain_id, class_id] / count
-                prototype = F.normalize(prototype, dim=0)
-                if self.initialized[domain_id, class_id]:
-                    updated = (
-                        self.momentum * self.prototypes[domain_id, class_id]
-                        + (1.0 - self.momentum) * prototype
+                prototype = F.normalize(
+                    sums[domain_id, class_id] / counts[domain_id, class_id],
+                    dim=0,
+                )
+                if initialized[domain_id, class_id]:
+                    previous = bank[domain_id, class_id].clone()
+                    prototype = F.normalize(
+                        momentum * bank[domain_id, class_id]
+                        + (1.0 - momentum) * prototype,
+                        dim=0,
                     )
-                    self.prototypes[domain_id, class_id].copy_(
-                        F.normalize(updated, dim=0)
+                    drift_terms.append(
+                        1.0 - F.cosine_similarity(
+                            previous.unsqueeze(0), prototype.unsqueeze(0)
+                        ).mean()
                     )
-                else:
-                    self.prototypes[domain_id, class_id].copy_(prototype)
-                    self.initialized[domain_id, class_id] = True
+                bank[domain_id, class_id].copy_(prototype)
+                initialized[domain_id, class_id] = True
+        drift = torch.stack(drift_terms).mean() if drift_terms else bank.new_zeros(())
+        if source == "labeled":
+            self.last_labeled_drift.copy_(drift)
+        else:
+            self.last_pseudo_drift.copy_(drift)
+
+    def _spread_indices(self, indices):
+        if indices.shape[0] <= self.max_samples_per_class:
+            return indices
+        positions = torch.div(
+            torch.arange(
+                self.max_samples_per_class,
+                device=indices.device,
+            )
+            * indices.shape[0],
+            self.max_samples_per_class,
+            rounding_mode="floor",
+        )
+        return indices[positions]
 
     def forward(
         self,
@@ -87,38 +224,33 @@ class TopologyCorePrototypeMemory(nn.Module):
         weights,
         core_mask,
         domain_ids,
-        heldout_domain=None,
+        source="labeled",
         update_memory=True,
+        pseudo_blend=0.0,
+        leave_one_domain_out=True,
     ):
         if features.ndim != 4:
             raise ValueError("TCPM features must have shape [N, C, H, W]")
+        if source not in {"labeled", "pseudo"}:
+            raise ValueError("TCPM source must be 'labeled' or 'pseudo'")
+
         feature_size = features.shape[-2:]
         labels = F.interpolate(
-            labels.unsqueeze(1).float(),
-            size=feature_size,
-            mode="nearest",
+            labels.unsqueeze(1).float(), size=feature_size, mode="nearest"
         ).squeeze(1).long()
         weights = F.interpolate(
-            weights.unsqueeze(1).float(),
-            size=feature_size,
-            mode="nearest",
+            weights.unsqueeze(1).float(), size=feature_size, mode="nearest"
         ).squeeze(1)
         core_mask = F.interpolate(
-            core_mask.unsqueeze(1).float(),
-            size=feature_size,
-            mode="nearest",
+            core_mask.unsqueeze(1).float(), size=feature_size, mode="nearest"
         ).squeeze(1).bool()
         features = F.normalize(features.float(), dim=1)
 
         sums = features.new_zeros(
-            self.num_domains,
-            self.num_classes,
-            self.feature_dim,
+            self.num_domains, self.num_classes, self.feature_dim
         )
         counts = features.new_zeros(self.num_domains, self.num_classes)
-        selected_features = []
-        selected_labels = []
-        batch_prototypes = []
+        centroids = []
 
         for batch_index in range(features.shape[0]):
             domain_id = int(domain_ids[batch_index]) % self.num_domains
@@ -126,113 +258,86 @@ class TopologyCorePrototypeMemory(nn.Module):
             for class_id in range(self.num_classes):
                 selected = core_mask[batch_index] & labels[batch_index].eq(class_id)
                 indices = selected.nonzero(as_tuple=False)
-                if indices.numel() == 0:
+                if indices.shape[0] < self.min_core_pixels:
                     continue
-                if indices.shape[0] > self.max_samples_per_class:
-                    indices = indices[: self.max_samples_per_class]
+                indices = self._spread_indices(indices)
                 class_features = feature_map[indices[:, 0], indices[:, 1]]
                 class_weights = weights[batch_index, indices[:, 0], indices[:, 1]]
                 class_weights = class_weights.clamp_min(1e-6)
-                weighted_sum = (class_features * class_weights.unsqueeze(1)).sum(dim=0)
+                weighted_sum = (class_features * class_weights.unsqueeze(1)).sum(0)
                 weight_sum = class_weights.sum()
-                sums[domain_id, class_id] += weighted_sum.detach()
-                counts[domain_id, class_id] += weight_sum.detach()
-                selected_features.append(class_features)
-                selected_labels.append(
-                    torch.full(
-                        (class_features.shape[0],),
-                        class_id,
-                        device=features.device,
-                        dtype=torch.long,
-                    )
-                )
-                batch_prototypes.append(
-                    (class_id, weighted_sum / weight_sum.clamp_min(1e-6))
-                )
+                centroid = F.normalize(weighted_sum / weight_sum.clamp_min(1e-6), dim=0)
+                sums[domain_id, class_id] += centroid.detach()
+                counts[domain_id, class_id] += 1.0
+                centroids.append((domain_id, class_id, centroid))
 
         if update_memory:
-            self._update(sums, counts, heldout_domain)
+            self._update_bank(sums, counts, source)
 
-        global_prototypes, available = self._global_prototypes(heldout_domain)
         zero = features.sum() * 0.0
-        if not selected_features or available.sum() < 2:
-            return {
-                "contrastive": zero,
-                "domain_compact": zero,
-                "hard_negative": zero,
-            }
-
-        available_classes = available.nonzero(as_tuple=False).flatten()
-        class_remap = labels.new_full((self.num_classes,), -1)
-        class_remap[available_classes] = torch.arange(
-            available_classes.numel(),
-            device=labels.device,
-        )
-        feature_samples = torch.cat(selected_features, dim=0)
-        label_samples = torch.cat(selected_labels, dim=0)
-        keep = class_remap[label_samples].ge(0)
-        if keep.any():
-            logits = (
-                feature_samples[keep]
-                @ global_prototypes[available_classes].t()
-                / self.temperature
-            )
-            contrastive = F.cross_entropy(
-                logits,
-                class_remap[label_samples[keep]],
-            )
-        else:
-            contrastive = zero
-
+        contrastive_terms = []
         compact_terms = []
-        for class_id, batch_prototype in batch_prototypes:
+        hard_negative_terms = []
+        reference_cache = {}
+
+        for domain_id, class_id, centroid in centroids:
+            excluded_domain = domain_id if leave_one_domain_out else None
+            cache_key = excluded_domain if excluded_domain is not None else -1
+            if cache_key not in reference_cache:
+                reference_cache[cache_key] = self._reference_prototypes(
+                    excluded_domain=excluded_domain,
+                    pseudo_blend=pseudo_blend,
+                )
+            references, available = reference_cache[cache_key]
+
+            available_classes = available.nonzero(as_tuple=False).flatten()
+            if available[class_id] and available_classes.numel() >= 2:
+                logits = centroid @ references[available_classes].t()
+                target = available_classes.eq(class_id).nonzero(as_tuple=False)
+                if target.numel() > 0:
+                    contrastive_terms.append(
+                        F.cross_entropy(
+                            (logits / self.temperature).unsqueeze(0),
+                            target.flatten()[:1],
+                        )
+                    )
             if available[class_id]:
                 compact_terms.append(
                     1.0
                     - F.cosine_similarity(
-                        batch_prototype.unsqueeze(0),
-                        global_prototypes[class_id].unsqueeze(0),
+                        centroid.unsqueeze(0),
+                        references[class_id].unsqueeze(0),
                     ).mean()
                 )
-        domain_compact = (
-            torch.stack(compact_terms).mean() if compact_terms else zero
-        )
 
-        hard_negative_terms = []
-        if available[self.stem_class] and available[self.leaf_class]:
-            stem_global = global_prototypes[self.stem_class]
-            leaf_global = global_prototypes[self.leaf_class]
-            for class_id, batch_prototype in batch_prototypes:
+            if available[self.stem_class] and available[self.leaf_class]:
                 if class_id == self.stem_class:
-                    positive = F.cosine_similarity(
-                        batch_prototype.unsqueeze(0),
-                        stem_global.unsqueeze(0),
-                    )
-                    negative = F.cosine_similarity(
-                        batch_prototype.unsqueeze(0),
-                        leaf_global.unsqueeze(0),
-                    )
+                    positive = references[self.stem_class]
+                    negative = references[self.leaf_class]
                 elif class_id == self.leaf_class:
-                    positive = F.cosine_similarity(
-                        batch_prototype.unsqueeze(0),
-                        leaf_global.unsqueeze(0),
-                    )
-                    negative = F.cosine_similarity(
-                        batch_prototype.unsqueeze(0),
-                        stem_global.unsqueeze(0),
-                    )
+                    positive = references[self.leaf_class]
+                    negative = references[self.stem_class]
                 else:
                     continue
-                hard_negative_terms.append(
-                    F.relu(negative - positive + self.hard_negative_margin).mean()
+                positive_similarity = F.cosine_similarity(
+                    centroid.unsqueeze(0), positive.unsqueeze(0)
                 )
-        hard_negative = (
-            torch.stack(hard_negative_terms).mean()
-            if hard_negative_terms
-            else zero
-        )
+                negative_similarity = F.cosine_similarity(
+                    centroid.unsqueeze(0), negative.unsqueeze(0)
+                )
+                hard_negative_terms.append(
+                    F.relu(
+                        negative_similarity
+                        - positive_similarity
+                        + self.hard_negative_margin
+                    ).mean()
+                )
+
+        def mean_or_zero(terms):
+            return torch.stack(terms).mean() if terms else zero
+
         return {
-            "contrastive": contrastive,
-            "domain_compact": domain_compact,
-            "hard_negative": hard_negative,
+            "contrastive": mean_or_zero(contrastive_terms),
+            "domain_compact": mean_or_zero(compact_terms),
+            "hard_negative": mean_or_zero(hard_negative_terms),
         }

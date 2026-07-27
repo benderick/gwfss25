@@ -1,0 +1,9 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      MEMORY_WARMUP_ITERS: 0
+      LOSS_RAMP_ITERS: 1
+      PSEUDO_UPDATE_START: 20000
+      PSEUDO_RAMP_ITERS: 1

@@ -22,6 +22,7 @@ from detectron2.modeling import META_ARCH_REGISTRY, build_backbone, build_sem_se
 from detectron2.modeling.backbone import Backbone
 from detectron2.modeling.postprocessing import sem_seg_postprocess
 from detectron2.structures import Boxes, ImageList, Instances, BitMasks
+from detectron2.utils.events import get_event_storage
 from detectron2.utils.memory import retry_if_cuda_oom
 
 import detectron2.utils.comm as comm
@@ -38,6 +39,7 @@ from .topowheat import (
     masked_nll_loss,
     query_semantic_probabilities,
     soft_cldice_loss,
+    tcpm_curriculum_state,
 )
 from .topowheat.topology import soft_skeletonize
 
@@ -149,9 +151,11 @@ class MaskFormer(nn.Module):
                 num_domains=self.tcpm_cfg.NUM_DOMAINS,
                 num_classes=self.sem_seg_head.num_classes,
                 feature_dim=self.cfg.MODEL.SEM_SEG_HEAD.MASK_DIM,
-                momentum=self.tcpm_cfg.MOMENTUM,
+                labeled_momentum=self.tcpm_cfg.LABELED_MOMENTUM,
+                pseudo_momentum=self.tcpm_cfg.PSEUDO_MOMENTUM,
                 temperature=self.tcpm_cfg.TEMPERATURE,
                 max_samples_per_class=self.tcpm_cfg.MAX_SAMPLES_PER_CLASS,
+                min_core_pixels=self.tcpm_cfg.MIN_CORE_PIXELS,
                 hard_negative_margin=self.tcpm_cfg.HARD_NEGATIVE_MARGIN,
                 stem_class=self.stem_class,
                 leaf_class=self.leaf_class,
@@ -468,11 +472,24 @@ class MaskFormer(nn.Module):
             for sample in batched_inputs
         ]
 
-    def _heldout_domain(self):
-        if not self.tcpm_cfg.HELDOUT_ENABLED:
-            return None
-        period = max(int(self.tcpm_cfg.HOLDOUT_PERIOD), 1)
-        return (self.iter // period) % int(self.tcpm_cfg.NUM_DOMAINS)
+    def _tcpm_start_iter(self):
+        configured = int(self.tcpm_cfg.START_ITER)
+        return self.burn_in if configured < 0 else configured
+
+    def _tcpm_state(self):
+        return tcpm_curriculum_state(
+            current_iter=self.iter,
+            start_iter=self._tcpm_start_iter(),
+            memory_warmup_iters=self.tcpm_cfg.MEMORY_WARMUP_ITERS,
+            loss_ramp_iters=self.tcpm_cfg.LOSS_RAMP_ITERS,
+            pseudo_update_start=self.tcpm_cfg.PSEUDO_UPDATE_START,
+            pseudo_ramp_iters=self.tcpm_cfg.PSEUDO_RAMP_ITERS,
+            pseudo_blend_max=self.tcpm_cfg.PSEUDO_BLEND_MAX,
+        )
+
+    def _ensure_tcpm_started(self):
+        if not bool(self.prototype_memory.memory_started.item()):
+            self.prototype_memory.reset_memory()
 
     def _prototype_losses(
         self,
@@ -481,28 +498,64 @@ class MaskFormer(nn.Module):
         weights,
         core_mask,
         batched_inputs,
+        source,
     ):
+        state = self._tcpm_state()
+        if not state["active"]:
+            return {}
+        self._ensure_tcpm_started()
+        if source == "pseudo":
+            core_mask = core_mask & weights.ge(
+                float(self.tcpm_cfg.PSEUDO_MIN_WEIGHT)
+            )
+            update_memory = state["pseudo_update"]
+        else:
+            update_memory = True
         losses = self.prototype_memory(
             outputs["mask_features"],
             labels,
             weights,
             core_mask,
             self._domain_ids(batched_inputs),
-            heldout_domain=self._heldout_domain(),
-            update_memory=True,
+            source=source,
+            update_memory=update_memory,
+            pseudo_blend=state["pseudo_blend"],
+            leave_one_domain_out=bool(
+                self.tcpm_cfg.LEAVE_ONE_DOMAIN_OUT
+            ),
         )
+        try:
+            storage = get_event_storage()
+            storage.put_scalar("tcpm/loss_scale", state["loss_scale"])
+            storage.put_scalar("tcpm/pseudo_blend", state["pseudo_blend"])
+            drift = (
+                self.prototype_memory.last_pseudo_drift
+                if source == "pseudo"
+                else self.prototype_memory.last_labeled_drift
+            )
+            storage.put_scalar(
+                "tcpm/{}_drift".format(source),
+                float(drift.item()),
+            )
+        except AssertionError:
+            # Direct model calls used by diagnostics may not own EventStorage.
+            pass
+        loss_scale = state["loss_scale"]
         return {
             "loss_tcpm_contrastive": (
                 losses["contrastive"]
                 * float(self.tcpm_cfg.CONTRASTIVE_WEIGHT)
+                * loss_scale
             ),
             "loss_tcpm_domain": (
                 losses["domain_compact"]
                 * float(self.tcpm_cfg.DOMAIN_COMPACT_WEIGHT)
+                * loss_scale
             ),
             "loss_tcpm_hard_negative": (
                 losses["hard_negative"]
                 * float(self.tcpm_cfg.HARD_NEGATIVE_WEIGHT)
+                * loss_scale
             ),
         }
 
@@ -570,7 +623,7 @@ class MaskFormer(nn.Module):
                 * float(self.trpl_cfg.SUPERVISED_TOPOLOGY_WEIGHT)
             )
 
-        if self.tcpm_enabled:
+        if self.tcpm_enabled and self._tcpm_state()["active"]:
             core_mask = build_core_mask(
                 safe_labels,
                 valid,
@@ -588,6 +641,7 @@ class MaskFormer(nn.Module):
                     valid.float(),
                     core_mask,
                     batched_inputs,
+                    source="labeled",
                 )
             )
 
@@ -678,13 +732,14 @@ class MaskFormer(nn.Module):
             skeleton_dice * float(self.trpl_cfg.SKELETON_LOSS_WEIGHT)
         )
 
-        if self.tcpm_enabled:
+        if self.tcpm_enabled and self._tcpm_state()["active"]:
             prototype_losses = self._prototype_losses(
                 outputs,
                 labels,
                 weights,
                 core_mask,
                 batched_inputs,
+                source="pseudo",
             )
             losses.update(
                 {
@@ -820,7 +875,11 @@ class MaskFormer(nn.Module):
 
             features = self.backbone(images.tensor)
             need_topowheat_features = (
-                self.tcpm_enabled or self.bazr_aux_enabled
+                (
+                    self.tcpm_enabled
+                    and self._tcpm_state()["active"]
+                )
+                or self.bazr_aux_enabled
             )
             outputs = self.sem_seg_head(
                 features,
@@ -944,7 +1003,11 @@ class MaskFormer(nn.Module):
             # First perturbation stream.
             features = self.backbone(images_unl)
             need_topowheat_features = (
-                self.tcpm_enabled or self.bazr_aux_enabled
+                (
+                    self.tcpm_enabled
+                    and self._tcpm_state()["active"]
+                )
+                or self.bazr_aux_enabled
             )
             outputs = self.sem_seg_head(
                 features,

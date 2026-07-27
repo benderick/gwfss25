@@ -1,4 +1,4 @@
-from .prototype_memory import TopologyCorePrototypeMemory
+from .prototype_memory import TopologyCorePrototypeMemory, tcpm_curriculum_state
 from .selective_zoom import BAZRFusionGate, BrokenAwareZoomRefiner
 from .topology import (
     build_core_mask,
@@ -14,6 +14,7 @@ __all__ = [
     "BAZRFusionGate",
     "BrokenAwareZoomRefiner",
     "TopologyCorePrototypeMemory",
+    "tcpm_curriculum_state",
     "build_core_mask",
     "build_trpl_targets",
     "endpoint_map",

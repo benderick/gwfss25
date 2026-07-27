@@ -531,7 +531,7 @@ def draw_tcpm(ax, x, y, width, height):
     rounded_box(ax, x, y, width, height, face=TCPM_BG, edge="none", radius=0.010, zorder=4)
     ax.add_patch(Rectangle((x, y + height - 0.007), width, 0.007, facecolor=TCPM, edgecolor="none", zorder=5))
     ax.text(x + 0.012, y + height - 0.025, "TCPM", ha="left", va="center", color=TCPM, fontsize=8.7, fontweight="bold", zorder=7)
-    ax.text(x + 0.012, y + height - 0.048, "domain-invariant organ cores", ha="left", va="center", color=INK, fontsize=6.2, zorder=7)
+    ax.text(x + 0.012, y + height - 0.048, "curriculum-stabilized organ anchors", ha="left", va="center", color=INK, fontsize=6.2, zorder=7)
 
     colors = (BACKGROUND, HEAD, STEM, LEAF)
     grid_x = x + 0.019
@@ -556,7 +556,7 @@ def draw_tcpm(ax, x, y, width, height):
     arrow(ax, (x + 0.078, y + 0.083), (proto_x - 0.014, y + 0.083), color=TCPM, lw=0.8)
     arrow(ax, (proto_x + 0.014, y + 0.083), (anchor_x - 0.018, y + 0.083), color=TCPM, lw=0.8)
     ax.text(x + 0.043, y + 0.025, "core\npixels", ha="center", va="center", color=MUTED, fontsize=5.3, linespacing=0.88, zorder=8)
-    ax.text(proto_x, y + 0.025, "domain\nprototypes", ha="center", va="center", color=MUTED, fontsize=5.3, linespacing=0.88, zorder=8)
+    ax.text(proto_x, y + 0.025, "dual domain\nmemory", ha="center", va="center", color=MUTED, fontsize=5.3, linespacing=0.88, zorder=8)
     ax.text(anchor_x, y + 0.025, "class\nanchors", ha="center", va="center", color=MUTED, fontsize=5.3, linespacing=0.88, zorder=8)
 
 
@@ -921,13 +921,13 @@ def draw_tcpm_mechanism(ax, labels):
     core_visual = core_sampling_visual(crop_labels)
 
     phase_label(ax, x + 0.014, y + 0.526, "CORE PIXELS", TCPM, 0.113)
-    phase_label(ax, x + 0.141, y + 0.526, "MEMORY", TCPM, 0.096)
+    phase_label(ax, x + 0.141, y + 0.526, "DUAL MEMORY", TCPM, 0.096)
     phase_label(ax, x + 0.251, y + 0.526, "ANCHORS", TCPM, 0.064)
 
     # Real organ geometry determines which pixels are allowed to update prototypes.
     core_x, core_y = x + 0.016, y + 0.344
     image_tile(ax, core_visual, core_x, core_y, 0.073, 0.151, edge=TCPM, lw=0.7, radius=0.005, zorder=6)
-    map_caption(ax, core_x, y + 0.324, 0.073, r"core set $\Omega_{c,d}$", color=TCPM, size=5.2)
+    map_caption(ax, core_x, y + 0.324, 0.073, r"core set $\Omega_{i,c}$", color=TCPM, size=5.2)
     rounded_box(ax, x + 0.096, y + 0.416, 0.034, 0.066, face=WHITE, edge=TCPM, radius=0.007, lw=0.7, zorder=5)
     ax.text(x + 0.113, y + 0.454, r"$\sum$", ha="center", va="center", color=TCPM, fontsize=9.0, fontweight="bold", zorder=7)
     ax.text(x + 0.113, y + 0.429, r"$wz$", ha="center", va="center", color=INK, fontsize=5.0, zorder=7)
@@ -935,22 +935,18 @@ def draw_tcpm_mechanism(ax, labels):
     ax.text(x + 0.051, y + 0.286, "eroded interiors", ha="center", va="center", color=HEAD, fontsize=4.8, zorder=8)
     ax.text(x + 0.051, y + 0.268, "skeleton tube for stem", ha="center", va="center", color=MODEL, fontsize=4.8, zorder=8)
 
-    # The memory is indexed by acquisition domain and semantic class.
+    # Labelled and pseudo-labelled evidence use separate domain-class banks.
     memory_x, memory_y = x + 0.143, y + 0.326
     ax.add_patch(Rectangle((memory_x, memory_y), 0.094, 0.181, facecolor=WHITE, edgecolor=TCPM, linewidth=0.7, zorder=5))
-    ax.text(memory_x + 0.047, memory_y + 0.157, r"$q_{c,d}\leftarrow\mu q_{c,d}+(1-\mu)\tilde q$", ha="center", va="center", color=TCPM, fontsize=4.7, zorder=7)
-    ax.text(memory_x + 0.014, memory_y + 0.132, "domain", ha="center", va="center", color=MUTED, fontsize=4.6, zorder=7)
-    for column, (class_name, color) in enumerate(zip(("bg", "hd", "st", "lf"), colors)):
-        xx = memory_x + 0.042 + column * 0.013
-        ax.text(xx, memory_y + 0.132, class_name, ha="center", va="center", color=color, fontsize=4.3, zorder=7)
-    row_specs = ((r"$d_1$", False), (r"$d_2$", False), (r"$d_h$", True))
-    for row, (domain, held_out) in enumerate(row_specs):
-        yy = memory_y + 0.100 - row * 0.039
-        if held_out:
-            ax.add_patch(Rectangle((memory_x + 0.005, yy - 0.015), 0.084, 0.030, fill=False, edgecolor=TRPL, linewidth=0.65, linestyle=(0, (2, 2)), zorder=6))
-        ax.text(memory_x + 0.014, yy, domain, ha="center", va="center", color=TRPL if held_out else INK, fontsize=5.1, zorder=8)
-        for column, color in enumerate(colors):
-            ax.add_patch(Circle((memory_x + 0.042 + column * 0.013, yy), 0.0047, facecolor=color, edgecolor=WHITE, linewidth=0.3, zorder=8))
+    ax.text(memory_x + 0.047, memory_y + 0.158, r"labelled $q^L_{c,d}$, $\mu_L=.95$", ha="center", va="center", color=TCPM, fontsize=4.5, zorder=7)
+    ax.text(memory_x + 0.047, memory_y + 0.081, r"pseudo $q^P_{c,d}$, $\mu_P=.995$", ha="center", va="center", color=MODEL, fontsize=4.5, zorder=7)
+    ax.plot([memory_x + 0.006, memory_x + 0.088], [memory_y + 0.096, memory_y + 0.096], color=LINE, linewidth=0.45, zorder=6)
+    for bank_offset in (0.0, -0.077):
+        for row, domain in enumerate((r"$d_1$", r"$d_2$")):
+            yy = memory_y + 0.132 + bank_offset - row * 0.026
+            ax.text(memory_x + 0.012, yy, domain, ha="center", va="center", color=INK, fontsize=4.4, zorder=8)
+            for column, color in enumerate(colors):
+                ax.add_patch(Circle((memory_x + 0.036 + column * 0.014, yy), 0.0043, facecolor=color, edgecolor=WHITE, linewidth=0.3, zorder=8))
     arrow(ax, (x + 0.130, y + 0.449), (memory_x - 0.004, memory_y + 0.101), color=TCPM, lw=0.75)
 
     anchor_x, anchor_y = x + 0.283, y + 0.420
@@ -961,36 +957,36 @@ def draw_tcpm_mechanism(ax, labels):
         point = (anchor_x + 0.020 * np.cos(angle), anchor_y + 0.020 * np.sin(angle))
         anchor_positions.append(point)
         ax.add_patch(Circle(point, 0.0060, facecolor=color, edgecolor=WHITE, linewidth=0.35, zorder=8))
-    ax.text(anchor_x, y + 0.367, r"$q_c=D^{-1}\sum_dq_{c,d}$", ha="center", va="center", color=TCPM, fontsize=4.8, zorder=8)
+    ax.text(anchor_x, y + 0.367, r"$\bar q_c^{(-d_i)}=(1-\eta)q_c^L+\eta q_c^P$", ha="center", va="center", color=TCPM, fontsize=3.6, zorder=8)
     arrow(ax, (memory_x + 0.094, memory_y + 0.103), (anchor_x - 0.038, anchor_y), color=TCPM, lw=0.75)
     # Explicitly encode the difficult stem/leaf separation at the anchor level.
     stem_point, leaf_point = anchor_positions[2], anchor_positions[3]
     ax.annotate("", xy=stem_point, xytext=leaf_point, arrowprops=dict(arrowstyle="<->", color=TRPL, lw=0.65), zorder=9)
-    ax.text(anchor_x, y + 0.337, "stem/leaf repel", ha="center", va="center", color=TRPL, fontsize=4.7, zorder=8)
+    ax.text(anchor_x, y + 0.337, "stem $\leftrightarrow$ leaf", ha="center", va="center", color=TRPL, fontsize=4.5, zorder=8)
 
-    # Rotating held-out domains are queried against support-only anchors.
+    # Each centroid is queried against anchors that exclude its own domain.
     episode_y = y + 0.164
     ax.plot([x + 0.016, x + 0.314], [episode_y + 0.092, episode_y + 0.092], color=TCPM, linewidth=0.75, zorder=5)
     ax.plot([x + 0.016, x + 0.314], [episode_y, episode_y], color=LINE, linewidth=0.45, zorder=5)
-    ax.text(x + 0.028, episode_y + 0.073, "ROTATING HELD-OUT DOMAIN", ha="left", va="center", color=TCPM, fontsize=5.5, fontweight="bold", zorder=7)
+    ax.text(x + 0.028, episode_y + 0.073, "PER-SAMPLE LODO", ha="left", va="center", color=TCPM, fontsize=5.3, fontweight="bold", zorder=7)
     support_x = x + 0.058
     query_x = x + 0.254
     for index, color in enumerate(colors):
         ax.add_patch(Circle((support_x + index * 0.011, episode_y + 0.035), 0.0044, facecolor=color, edgecolor=WHITE, linewidth=0.25, zorder=8))
         ax.add_patch(Circle((query_x + index * 0.011, episode_y + 0.035), 0.0044, facecolor=color, edgecolor=WHITE, linewidth=0.25, zorder=8))
-    ax.text(support_x + 0.017, episode_y + 0.013, r"support $d\ne d_h$", ha="center", va="center", color=MUTED, fontsize=4.7, zorder=8)
+    ax.text(support_x + 0.017, episode_y + 0.013, r"memory $d\ne d_i$", ha="center", va="center", color=MUTED, fontsize=4.7, zorder=8)
     ax.add_patch(Circle((x + 0.164, episode_y + 0.035), 0.017, facecolor=WHITE, edgecolor=TCPM, linewidth=0.75, zorder=7))
-    ax.text(x + 0.164, episode_y + 0.035, r"$q_c$", ha="center", va="center", color=TCPM, fontsize=6.2, fontweight="bold", zorder=8)
+    ax.text(x + 0.164, episode_y + 0.035, r"$\bar q_c^{(-d_i)}$", ha="center", va="center", color=TCPM, fontsize=4.8, fontweight="bold", zorder=8)
     ax.add_patch(Rectangle((query_x - 0.010, episode_y + 0.021), 0.054, 0.034, fill=False, edgecolor=TRPL, linewidth=0.65, linestyle=(0, (2, 2)), zorder=7))
-    ax.text(query_x + 0.017, episode_y + 0.010, r"query $d_h$", ha="center", va="center", color=TRPL, fontsize=4.7, zorder=8)
+    ax.text(query_x + 0.017, episode_y + 0.010, r"centroid $d_i$", ha="center", va="center", color=TRPL, fontsize=4.7, zorder=8)
     arrow(ax, (support_x + 0.058, episode_y + 0.035), (x + 0.144, episode_y + 0.035), color=TCPM, lw=0.7)
     arrow(ax, (x + 0.182, episode_y + 0.035), (query_x - 0.012, episode_y + 0.035), color=TRPL, lw=0.7, dashed=True)
-    ax.text(x + 0.302, episode_y + 0.073, "no memory update", ha="right", va="center", color=MUTED, fontsize=4.5, zorder=8)
+    ax.text(x + 0.302, episode_y + 0.073, "20k $q^L$ | 25k loss | 35k $q^P$ | 45k $\eta=.2$", ha="right", va="center", color=MUTED, fontsize=3.35, zorder=8)
 
     output_y = y + 0.070
     outputs = (
-        (x + 0.016, 0.087, TCPM, r"pixel $\leftrightarrow q_c$", r"$\mathcal{L}_{con}$"),
-        (x + 0.111, 0.091, TCPM, r"$q_{c,d}\rightarrow q_c$", r"$\mathcal{L}_{dom}$"),
+        (x + 0.016, 0.087, TCPM, r"centroid $\leftrightarrow \bar q_c^{(-d)}$", r"$\mathcal{L}_{con}$"),
+        (x + 0.111, 0.091, TCPM, r"same-class alignment", r"$\mathcal{L}_{dom}$"),
         (x + 0.210, 0.104, TRPL, "hard negative", r"stem $\leftrightarrow$ leaf"),
     )
     for xx, box_w, color, upper, lower in outputs:
