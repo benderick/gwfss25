@@ -3,13 +3,13 @@
 
 \subsection{标注稀缺条件下的器官分割}
 
-早期田间作物分割通常依赖颜色指数或卷积编码器--解码器。DeepLabV3+ 通过空洞卷积和低层特征融合兼顾上下文与边界 \citep{chen2018deeplabv3plus}，SegFormer 则使用层次化 Transformer 和轻量解码器获得更强的全局建模能力 \citep{xie2021segformer}。GWFSS 数据集上的比较表明，SegFormer 在随机划分和区域划分下均优于 DeepLabV3+，但茎秆仍明显弱于其他器官 \citep{wang2025gwfss}。Mask2Former 将语义分割统一为类别查询与掩码预测问题 \citep{cheng2022mask2former}，结合 ViT-Adapter 和动态上采样后能够进一步改善密集预测中的局部细节 \citep{chen2023vitadapter,lu2022sapa}。
+早期田间作物分割通常依赖颜色指数或卷积编码器--解码器。DeepLabV3+ 通过空洞卷积和低层特征融合兼顾上下文与边界 \citep{chen2018deeplabv3plus}，SegFormer 则使用层次化 Transformer 和轻量解码器获得更强的全局建模能力 \citep{xie2021segformer}。GWFSS 数据集上的比较表明，SegFormer 在随机划分和区域划分下均优于 DeepLabV3+，但茎秆仍明显弱于其他器官 \citep{wang2025gwfss}。Mask2Former 将语义分割统一为类别查询与掩码预测问题 \citep{cheng2022mask2former}，ViT-Adapter 则使预训练视觉 Transformer 能够输出适合密集预测的多尺度特征 \citep{chen2023vitadapter}。
 
 有限标注使单纯监督训练容易过拟合。Mean Teacher 使用学生参数的指数滑动平均构建教师 \citep{tarvainen2017mean}，Guided Distillation 进一步在学生预热阶段同时使用有标注与无标注数据 \citep{berrada2024guided}。弱到强一致性方法通过教师的弱扰动预测监督学生的强扰动视图，已成为半监督语义分割的重要范式 \citep{yang2023unimatch}。ST++ 使用跨训练阶段的预测稳定性选择可靠图像 \citep{yang2022stpp}，U2PL 则将不可靠像素作为负类监督以减少无标注信息浪费 \citep{wang2022u2pl}。在小麦器官分割中，已有方法进一步使用器官比例或特征相似度选择无标注图像，并利用不确定性过滤伪标签 \citep{cao2025detailminority,ghosh2025decon}。这些方法提高了无标注数据利用率，但仍将茎秆伪标签主要视为普通区域，没有显式区分中心线结构与宽度边界的可靠性。
 
 \subsection{细长器官的结构完整性}
 
-茎秆具有占比低、宽度小、遮挡频繁和方向连续等特点。低分辨率特征上的插值容易模糊其边界，SAPA 通过高低分辨率特征相似性预测内容感知上采样核 \citep{lu2022sapa}，PointRend 则将不确定边界位置视为需要进一步渲染的点 \citep{kirillov2020pointrend}。这些方法能够恢复局部细节，但没有直接约束细长目标的连续性。
+茎秆具有占比低、宽度小、遮挡频繁和方向连续等特点。低分辨率特征与常规插值容易模糊其边界，PointRend 因而将不确定边界位置视为需要进一步渲染的点 \citep{kirillov2020pointrend}。这类局部细化能够恢复边界细节，但没有直接约束细长目标的连续性。
 
 拓扑保持损失为管状结构分割提供了另一种思路。soft-clDice 通过预测掩码与参考掩码骨架之间的重合关系度量拓扑精度和拓扑召回率 \citep{shit2021cldice}；中心线交叉熵进一步讨论了拓扑一致性与区域精度之间的平衡 \citep{acebes2024clce}。近期工作还从深浅层特征融合和生长--抑制平衡角度增强不同宽度管状结构的识别 \citep{huang2025harmonyseg}。然而，小麦茎秆并不等同于完整可见的血管或道路，其真实标注可能因叶片遮挡而中断。直接对所有预测强制连通会产生不符合可见区域定义的虚假连接。因此，本文只在多视图一致的可见中心线上施加拓扑监督，并将不可靠边界保留为忽略区域。
 

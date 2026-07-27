@@ -1,0 +1,4 @@
+role,split,path,annotation,usage,exists,sha256
+supervised_pair,competition_train,GWFSS/gwfss_competition_train/images/domain8_00003.png,GWFSS/gwfss_competition_train/class_id/domain8_00003.png,Aligned real RGB and annotation used for the supervised-pair example,True,6bf0d1f19c1c3728c3405f7f8be23971de44125ea5638088cf78bfca0c6db8f0
+unlabeled_views,competition_pretrain,GWFSS/gwfss_competition_pretrain/RRES/RRES_!_05630.jpg,,One real unlabeled image rendered with deterministic weak and strong color views,True,074e26dcb9cefb14df1ade39734474d21339f1e70be6a794ede12da20552f39f
+inference_flow,competition_val,GWFSS/gwfss_competition_val/images/domain7_00021.png,GWFSS/gwfss_competition_val/class_id/domain7_00021.png,"One aligned real RGB/annotation pair used for deterministic mechanism maps, core sampling, windows, crops, and output geometry",True,890dcf39904460f46b1096544e898a98a16aa396de6e0af983a17aea4fff29d8

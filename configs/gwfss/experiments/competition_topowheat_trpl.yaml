@@ -1,6 +1,9 @@
 _BASE_: competition_stage2_stem4500.yaml
 
 MODEL:
+  SEM_SEG_HEAD:
+    # TopoWheat excludes the SAPA upsampler used by the competition method.
+    UPSAMPLE_MODE: "bilinear"
   TOPOWHEAT:
     TRPL:
       ENABLED: True

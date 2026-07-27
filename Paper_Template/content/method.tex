@@ -18,21 +18,18 @@
 \theta_t\leftarrow\alpha\theta_t+(1-\alpha)\theta_s,
 \label{eq:ema}
 \end{equation}
-其中 $\alpha$ 为动量系数。基础分割器沿用项目中的 BEiTv2-Large、ViT-Adapter 和 Mask2Former 组合 \citep{peng2022beitv2,chen2023vitadapter,cheng2022mask2former,cao2025detailminority}。ViT-Adapter 输出四级特征，Mask2Former 使用多尺度像素解码器和掩码查询得到类别概率及掩码概率。本文的结构监督和原型学习均作用于由查询预测组合得到的可微语义概率图。
+其中 $\alpha$ 为动量系数。基础分割器由 BEiTv2-Large、ViT-Adapter 和 Mask2Former 构成 \citep{peng2022beitv2,chen2023vitadapter,cheng2022mask2former}。ViT-Adapter 输出四级特征，Mask2Former 使用多尺度像素解码器和掩码查询得到类别概率及掩码概率。本文的结构监督和原型学习均作用于由查询预测组合得到的可微语义概率图。
 
 \subsection{总体框架}
 
-\begin{figure*}[!htbp]
+\begin{figure}[!t]
 \centering
-%\includegraphics[width=0.96\linewidth]{figures/framework.pdf}
-\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.35cm}
-\placeholder{总体框架图由训练输入、可靠结构学习、跨域表示学习和推理精细化四个横向区域构成。左侧的有标注 RGB、四类真值与按采集域分组的无标注 RGB 共享 BEiTv2-L、ViT-Adapter 和 Mask2Former。中部的 EMA 教师接收弱增强，学生接收强增强；教师多尺度预测经 TRPL 生成绿色可靠区域、红色一像素中心线和灰色忽略边界。可靠区域连接伪监督损失，拓扑核心连接 TCPM；TCPM 包含多个域级类别原型、聚合全局原型、轮换留出域及同类吸引和异类排斥关系。右侧推理支路从一次全局预测中提取熵、骨架端点和内部尺度差异，经加权评分与 NMS 得到 Top-K 窗口，并将局部放大预测与全局结果门控融合。蓝色实线、橙色实线和虚线分别表示训练数据流、推理数据流和 EMA 更新，损失项与 $1+K$ 次前向计算在对应支路上标注。}
-\vspace{1.35cm}}}
-\caption{\METHOD 总体框架。训练阶段由 \TRPL 和 \TCPM 共同提高无标注监督的结构可靠性与跨域稳定性；推理阶段由 \BAZR 对预测中可能发生结构失效的少量区域进行高分辨率细化。}
+\includegraphics[width=\textwidth]{figures/framework.pdf}
+\caption{\METHOD 的三阶段流程与关键算子。上排依次给出监督预热、EMA 教师--学生联合训练和冻结教师推理。下排展开三个创新点：\TRPL 以多视图不确定性 $U$ 和中心线持续性 $A$ 解耦可靠区域 $R^+$、稳定中心线 $K^+$ 与忽略边界 $B^{?}$；\TCPM 从器官核心 $\Omega_{c,d}$ 更新类别--域原型 $q_{c,d}$，聚合全局锚点 $q_c$，并轮换留出域 $d_h$；\BAZR 将熵、异常端点、尺度分歧和茎秆先验组合为窗口风险 $r_k$，经 Top-$K$/NMS、局部前向和门控融合得到最终预测。RGB、标注、窗口与裁剪均来自严格对齐的真实样本；底排的概率、可靠性及风险热图依据同一标注几何确定性构造，仅解释空间对齐与运算关系，不表示实验预测。}
 \label{fig:framework}
-\end{figure*}
+\end{figure}
 
-整体信息流如\cref{fig:framework}所示。无标注图像经过教师的多尺度预测后，\TRPL 将茎秆伪标签分成可靠区域、稳定中心线和不确定边界。稳定中心线既参与学生的结构监督，也与其他器官的高置信内部区域共同构成 \TCPM 的原型更新样本。模型部署时不再维护教师和原型记忆，\BAZR 只从一次全局前向得到的熵、异常骨架端点和内部尺度差异中判断结构失效风险，将后续计算集中到少量窗口。
+监督预热、拓扑感知半监督学习与断裂感知推理构成一条连续的信息链（\cref{fig:framework}）。有标注样本首先确定器官语义和茎秆拓扑的共同表征起点 $\theta_0$，而不是作为某个特定数据规模下的附属步骤。半监督学习随后利用无标注图像扩展外观覆盖：\TRPL 将区域可信度与中心线稳定性解耦，\TCPM 再把这些结构上可靠的证据压缩为跨域类别参照。两条支路共享同一学生特征并通过联合目标相互约束，训练收敛后仅保留 EMA 教师参数 $\theta_t^*$。部署时不再维护学生和原型记忆；\BAZR 从该教师的一次全局前向中评估结构失效风险，把额外计算集中到少量候选窗口。图中下排已经给出三个模块的最小算子链，后续机理图进一步展示局部案例、空间热图和特征分布，不再重复整体训练流程。
 
 \subsection{拓扑可靠伪标签学习}
 \label{sec:trpl}
@@ -71,15 +68,12 @@ K_m=\mathcal S(P_m^{\mathrm{stem}}),
 A(p)=\frac{1}{M}\sum_{m=1}^{M}
 \mathbb I[K_m(p)>\tau_k].
 \end{equation}
-稳定中心线定义为 $K^+(p)=\mathbb I[A(p)\geq\rho]$。可靠茎秆区域 $R^+$ 由类别预测为茎秆且 $w(p)\geq\tau_{\mathrm{stem}}$ 的像素组成；预测为茎秆但未进入 $R^+$、且位于其邻域内的像素构成不确定边界 $B^{?}$。$B^{?}$ 不作为硬类别监督，而被写入忽略掩码。该表示保留了边界宽度不确定但中心位置稳定的茎秆监督。
+稳定中心线定义为 $K^+(p)=\mathbb I[A(p)\geq\rho]$。可靠茎秆区域 $R^+$ 由类别预测为茎秆且 $w(p)\geq\tau_{\mathrm{stem}}$ 的像素组成；在 $U$--$A$ 平面中，该条件等价于 $U(p)\leq u_{\mathrm{stem}}=-\tau_u\log\tau_{\mathrm{stem}}$。预测为茎秆但未进入 $R^+$、且位于其邻域内的像素构成不确定边界 $B^{?}$。$B^{?}$ 不作为硬类别监督，而被写入忽略掩码。该表示保留了边界宽度不确定但中心位置稳定的茎秆监督。
 
 \begin{figure}[!htbp]
 \centering
-%\includegraphics[width=\linewidth]{figures/topology_pseudo_label.pdf}
-\fbox{\parbox{0.94\linewidth}{\centering \vspace{1.05cm}
-\placeholder{TRPL 机理图采用从左到右的两层流程。上层给出同一小麦冠层图像的原尺度、缩小尺度和轻微颜色扰动视图，以及经反变换对齐的教师茎秆概率图。平均概率、归一化熵和 Jensen--Shannon 分歧共同形成由蓝色低不确定到红色高不确定的热图。下层的多视图可微骨架化得到中心线持续性，图例以红色、绿色、灰色和黑色分别标识稳定中心线 $K^+$、可靠茎秆区域 $R^+$、不确定边界 $B^{?}$ 和非茎秆。右侧局部对照显示，固定阈值删除了边界模糊但位置稳定的细茎，TRPL 则保留中心线、监督可靠区域并忽略宽度不确定的边界；遮挡案例中只有两段可见中心线接受监督。箭头分别将 $R^+$ 和 $K^+$ 连接到区域损失与拓扑损失，$B^{?}$ 不传播硬标签梯度。}
-\vspace{1.05cm}}}
-\caption{\TRPL 的中心线--区域解耦过程。多视图不确定性区分可靠区域、稳定中心线与忽略边界，局部案例对比了固定阈值与 \TRPL 的伪标签。}
+\includegraphics[width=\linewidth]{figures/topology_pseudo_label.pdf}
+\caption{\TRPL 的双证据解耦机制。（a）同一幅未标注图像经弱扰动和 EMA 教师预测后反变换至公共坐标，形成对齐概率栈 $\{P_m\}$；叠加轮廓揭示了不同视图对茎秆边界宽度的分歧及其共享的轴向结构。（b）分布支路由平均概率、预测熵和视图间 Jensen--Shannon 散度计算不确定性 $U(p)$，结构支路则聚合逐视图骨架得到持续性 $A(p)$。候选茎秆像素在 $U$--$A$ 平面中的等密度线与两个阈值共同呈现四种证据组合，其中低不确定性支持可靠区域，高持续性支持稳定中心线。（c）联合门控在同一空间坐标中分解出加权区域 $wR^+$、稳定中心线 $K^+$ 和忽略边界 $B^{?}$，三者分别连接区域损失、拓扑损失和无梯度路径。RGB 来自真实样本；概率场依据其标注几何构造为机制示意，不参与定量结论。}
 \label{fig:trpl}
 \end{figure}
 
