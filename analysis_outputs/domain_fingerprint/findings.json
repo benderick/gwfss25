@@ -1,0 +1,65 @@
+{
+  "source_pairwise_median_distance": 3.3966829994128687,
+  "domain_to_source_centroid": {
+    "Arvalis": 0.8593814503208257,
+    "CIMMYT": 3.0340061031787475,
+    "ETHZ": 1.7530898378109265,
+    "INRAE": 1.9012166956857872,
+    "NJAU": 3.2680447327327156,
+    "RRES": 2.207960309534263,
+    "ULiege_CRA-W": 2.593082347493573,
+    "UQ_new": 3.9664887647563454,
+    "USASK": 7.2534919312541515,
+    "UTokyo": 6.315148612274724
+  },
+  "feature_extremes": {
+    "stem_width_px": {
+      "minimum_domain": "ETHZ",
+      "minimum": 6.0,
+      "maximum_domain": "UTokyo",
+      "maximum": 22.80350850198276
+    },
+    "endpoint_density": {
+      "minimum_domain": "UTokyo",
+      "minimum": 13.62530413625304,
+      "maximum_domain": "ULiege_CRA-W",
+      "maximum": 86.60106479421121
+    },
+    "leaf_contact_pct": {
+      "minimum_domain": "UTokyo",
+      "minimum": 58.05316653635653,
+      "maximum_domain": "CIMMYT",
+      "maximum": 90.34981905910736
+    }
+  },
+  "target_largest_shifts": [
+    {
+      "feature": "green_excess",
+      "signed_robust_z": 1.9494008966126375
+    },
+    {
+      "feature": "chroma_variation",
+      "signed_robust_z": 1.5765953750149453
+    },
+    {
+      "feature": "luminance_std",
+      "signed_robust_z": 1.5486446279338504
+    },
+    {
+      "feature": "head_pct",
+      "signed_robust_z": -1.4078952620444656
+    }
+  ],
+  "ordered_domains": [
+    "USASK",
+    "UQ_new",
+    "NJAU",
+    "ULiege_CRA-W",
+    "ETHZ",
+    "Arvalis",
+    "INRAE",
+    "RRES",
+    "CIMMYT",
+    "UTokyo"
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "normalized_size": 512,
+  "classes": {
+    "Head": {
+      "median_area_pct_present_images": 12.284469604492188,
+      "absent_image_pct": 32.57299270072993,
+      "median_image_diameter_px": 24.166091947189145,
+      "median_centerline_below_4px_pct": 1.3903192584963975,
+      "median_centerline_below_8px_pct": 7.323943661971832,
+      "median_retention_stride_2": 99.88745075970738,
+      "median_retention_stride_4": 99.24081384755542,
+      "median_retention_stride_8": 97.23979298447384,
+      "median_retention_stride_16": 91.45454545454545,
+      "median_retention_stride_32": 75.34357316087308
+    },
+    "Stem": {
+      "median_area_pct_present_images": 2.9998779296875,
+      "absent_image_pct": 22.71897810218978,
+      "median_image_diameter_px": 8.246211251235321,
+      "median_centerline_below_4px_pct": 4.107142857142854,
+      "median_centerline_below_8px_pct": 35.71428571428571,
+      "median_retention_stride_2": 99.68213604577241,
+      "median_retention_stride_4": 97.41414141414141,
+      "median_retention_stride_8": 86.43503093764873,
+      "median_retention_stride_16": 40.48192771084337,
+      "median_retention_stride_32": 0.0
+    },
+    "Leaf": {
+      "median_area_pct_present_images": 57.405853271484375,
+      "absent_image_pct": 1.4598540145985384,
+      "median_image_diameter_px": 18.110770276274835,
+      "median_centerline_below_4px_pct": 2.720717526005756,
+      "median_centerline_below_8px_pct": 15.045024925526235,
+      "median_retention_stride_2": 99.80533644553621,
+      "median_retention_stride_4": 98.5286449166445,
+      "median_retention_stride_8": 94.56706187660548,
+      "median_retention_stride_16": 86.95274489836886,
+      "median_retention_stride_32": 80.15209633401045
+    }
+  }
+}
