@@ -33,6 +33,54 @@ def _unwrap_model(model):
     return model
 
 
+def teacher_ema_decay_for_iter(
+    current_iter,
+    update_start,
+    ema_decay,
+    reset_at_start,
+):
+    """Resolve the teacher update without conflating warm start and burn-in."""
+    current_iter = int(current_iter)
+    update_start = int(update_start)
+    if current_iter < update_start:
+        return None
+    if current_iter == update_start and bool(reset_at_start):
+        return 0.0
+    return float(ema_decay)
+
+
+@torch.no_grad()
+def parameter_rms_distance(module, reference_module, chunk_size=1_000_000):
+    """Compute an exact parameter RMS distance with bounded temporary memory."""
+    parameters = OrderedDict(_unwrap_model(module).named_parameters())
+    reference_parameters = OrderedDict(
+        _unwrap_model(reference_module).named_parameters()
+    )
+    if parameters.keys() != reference_parameters.keys():
+        raise ValueError("Teacher and student parameter names do not match")
+
+    squared_sum = None
+    parameter_count = 0
+    chunk_size = max(int(chunk_size), 1)
+    for name, parameter in parameters.items():
+        reference = reference_parameters[name]
+        flat_parameter = parameter.detach().reshape(-1)
+        flat_reference = reference.detach().reshape(-1)
+        parameter_count += flat_parameter.numel()
+        for start in range(0, flat_parameter.numel(), chunk_size):
+            difference = (
+                flat_parameter[start : start + chunk_size].float()
+                - flat_reference[start : start + chunk_size].float()
+            )
+            chunk_sum = difference.square().sum()
+            squared_sum = (
+                chunk_sum if squared_sum is None else squared_sum + chunk_sum
+            )
+    if squared_sum is None:
+        return 0.0
+    return float((squared_sum / max(parameter_count, 1)).sqrt().item())
+
+
 __all__ = ["HookBase", "TrainerBase", "SimpleTrainer", "AMPTrainer"]
 
 from detectron2.engine.train_loop import HookBase
@@ -674,12 +722,36 @@ class SimpleTrainerSSL(TrainerBase):
             if buffer.dtype == torch.float32:
                 ema_module_buffers[name].sub_((1. - ema_decay) * (ema_module_buffers[name] - buffer))
             else:
-                ema_module_buffers[name] = buffer.clone()
+                ema_module_buffers[name].copy_(buffer)
     
 
     def update_teacher_model(self, ema_decay):
         self.update_ema_module(self.model, self.model_teacher, 
                                ema_decay=ema_decay)
+
+    def update_teacher_for_iter(self, teacher_model):
+        decay = teacher_ema_decay_for_iter(
+            self.iter,
+            teacher_model.ema_update_start,
+            teacher_model.ema_decay,
+            teacher_model.reset_teacher_at_start,
+        )
+        if decay is not None:
+            self.update_teacher_model(ema_decay=decay)
+        storage = get_event_storage()
+        storage.put_scalar(
+            "ssl/teacher_ema_decay",
+            -1.0 if decay is None else decay,
+        )
+        diagnostic_period = max(
+            int(teacher_model.ssl_diagnostic_period),
+            0,
+        )
+        if diagnostic_period and self.iter % diagnostic_period == 0:
+            storage.put_scalar(
+                "ssl/teacher_student_param_rms",
+                parameter_rms_distance(self.model, self.model_teacher),
+            )
 
     def build_ssl_batch(self, data_unl):
         teacher_model = _unwrap_model(self.model_teacher)
@@ -730,10 +802,7 @@ class SimpleTrainerSSL(TrainerBase):
         """
         Update teacher model weights.
         """
-        if self.iter == teacher_model.burn_in:
-            self.update_teacher_model(ema_decay=0.)
-        elif self.iter > teacher_model.burn_in:
-            self.update_teacher_model(ema_decay=teacher_model.ema_decay)
+        self.update_teacher_for_iter(teacher_model)
 
         """
         If you want to do something with the losses, you can wrap the model.
@@ -964,10 +1033,7 @@ class AMPTrainerSSL(SimpleTrainerSSL):
         """
         Update teacher model weights.
         """
-        if self.iter == teacher_model.burn_in:
-            self.update_teacher_model(ema_decay=0.)
-        elif self.iter > teacher_model.burn_in:
-            self.update_teacher_model(ema_decay=teacher_model.ema_decay)
+        self.update_teacher_for_iter(teacher_model)
     
 
         data_ssl = self.build_ssl_batch(data_unl)

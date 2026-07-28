@@ -1,0 +1,7 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      # Disable hard-query mining while retaining core-to-region transfer.
+      HARD_QUERY_FRACTION: 1.0

@@ -1,0 +1,7 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+MODEL:
+  TOPOWHEAT:
+    TCPM:
+      # Diagnostic control: clean cores both build memory and receive losses.
+      QUERY_MODE: "centroid"

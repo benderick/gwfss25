@@ -32,19 +32,36 @@ stored in separate class-by-domain banks. For each sample, the loss reads an
 anchor aggregated from every available domain except that sample's own
 domain; all eligible domains continue to update on every iteration.
 
-The module contributes prototype contrastive, domain compactness, and
-stem-versus-leaf hard-negative losses at the sample core-centroid level.
+Only topology cores write to memory. Loss queries come from the wider reliable
+region: at most 128 spatially spread pixels are considered per class, and the
+25% farthest from their correct leave-one-domain-out anchor receive prototype
+contrastive, tolerance-truncated alignment, and stem-versus-leaf ranking
+losses. This asymmetric path keeps boundary mixtures out of the anchors while
+preventing already-separated core centroids from reducing every TCPM loss to
+nearly zero.
+
 Prototype buffers are synchronized across distributed workers and saved in
 normal Detectron2 checkpoints. Old single-bank experimental checkpoints are
 loaded into the labelled bank for compatibility.
 
-The default competition schedule starts TCPM at iteration 20,000. It warms the
-labelled bank for 5,000 iterations, ramps the losses for 10,000 iterations,
-then admits pseudo cores with confidence at least 0.8 and ramps their anchor
-contribution to 0.2. `CORE_STRATEGY` selects `reliable`, `eroded`, or
-`topology` evidence; `LEAVE_ONE_DOMAIN_OUT` controls per-sample domain
-exclusion. TensorBoard logs `tcpm/labeled_drift`, `tcpm/pseudo_drift`,
-`tcpm/loss_scale`, and `tcpm/pseudo_blend` for the prototype analysis.
+Stage II explicitly warm-starts both branches from the selected supervised
+checkpoint and updates the EMA teacher from iteration 0. In this mode the
+trainer does not subsequently reload `MODEL.WEIGHTS` into only the student;
+the startup log must report a maximum teacher/student parameter difference of
+zero. The checkpoint must use the same bilinear upsampling architecture as the
+TopoWheat configuration; the SAPA checkpoint belongs to the released-project
+baseline and is not a compatible TopoWheat warm start. TCPM writes only the
+labelled bank during iterations 0--5k, ramps its losses during 5k--15k, admits
+pseudo cores with confidence at least 0.8 at 15k, and ramps their anchor
+contribution to 0.2 by 25k. Pseudo queries use a separate 0.6 reliability gate.
+`CORE_STRATEGY` selects `reliable`, `eroded`, or `topology` anchor evidence;
+`QUERY_MODE` selects the diagnostic centroid path or the default hard-region
+path. `LEAVE_ONE_DOMAIN_OUT` controls per-sample domain exclusion.
+
+TensorBoard logs the teacher EMA decay, a chunked full-model teacher--student
+parameter RMS every 5k iterations, bank drift, raw TCPM losses, hard-query
+distance, anchor coverage, and stem--leaf ranking activation. A raw loss near
+zero is therefore distinguishable from a batch with no available anchor.
 
 The competition's anonymous domains are aligned with the named unlabelled
 folders as follows: domain1--domain9 correspond to CIMMYT, ETHZ, INRAE, NJAU,
@@ -82,11 +99,31 @@ exclusive so their compute and gains can be measured separately.
 
 ## Commands
 
+Create the architecture-matched supervised warm start when it is not already
+available:
+
+```bash
+CONFIG_FILE=configs/gwfss/experiments/competition_baseline.yaml \
+OUTPUT_DIR=outputs/competition_baseline_seed2025 \
+bash stage1_train.sh
+```
+
 Train the complete training-time method:
 
 ```bash
 bash topowheat_train.sh
 ```
+
+The default warm start is
+`outputs/competition_baseline_seed2025/model_best.pth`. Override
+`TEACHER_CKPT` when the matching supervised run has another output name; the
+diagnosed run, for example, used
+`outputs/competition_baseline_v0/model_best.pth`.
+
+Start the revised TCPM in a new `OUTPUT_DIR` without `--resume`. Use `--resume`
+only to continue a checkpoint produced by the same revised configuration; a
+checkpoint from the diagnosed centroid-query run contains a different training
+state and schedule.
 
 Train the TRPL ablation:
 
@@ -100,13 +137,14 @@ Train the pure TRPL+TCPM ablation without BAZR heads:
 
 ```bash
 CONFIG_FILE=configs/gwfss/experiments/competition_topowheat_trpl_tcpm.yaml \
-OUTPUT_DIR=outputs/competition_topowheat_trpl_tcpm_seed2025 \
+OUTPUT_DIR=outputs/competition_topowheat_hardquery_seed2025 \
 bash topowheat_train.sh
 ```
 
 TCPM component ablations have dedicated configs under
-`configs/gwfss/experiments/ablations/`. They cover reliable cores, eroded
-cores, immediate activation, labelled-only memory, and removal of per-sample
+`configs/gwfss/experiments/tcpm_ablations/`. They cover the legacy teacher
+handoff, reliable/eroded anchors, centroid or all-reliable queries, immediate
+activation, labelled-only memory, and removal of per-sample
 leave-one-domain-out. The existing `competition_topowheat_trpl.yaml` is the
 no-prototype row, and `competition_topowheat_trpl_tcpm.yaml` is the full row.
 
@@ -114,7 +152,7 @@ Evaluate one checkpoint on validation with one global forward:
 
 ```bash
 SPLIT=val MODE=global \
-CHECKPOINT=outputs/competition_topowheat_seed2025/model_best.pth \
+CHECKPOINT=outputs/competition_topowheat_hardquery_seed2025/model_best.pth \
 bash topowheat_eval.sh
 ```
 
@@ -122,7 +160,7 @@ Evaluate the same checkpoint on validation with BAZR:
 
 ```bash
 SPLIT=val MODE=bazr \
-CHECKPOINT=outputs/competition_topowheat_seed2025/model_best.pth \
+CHECKPOINT=outputs/competition_topowheat_hardquery_seed2025/model_best.pth \
 bash topowheat_eval.sh
 ```
 

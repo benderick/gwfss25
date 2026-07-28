@@ -9,7 +9,7 @@ DATASETS:
   TEST: ("gwfss_sem_seg_val",)
 
 SOLVER:
-  IMS_PER_BATCH: 2
+  IMS_PER_BATCH: 1
   MAX_ITER: 90000
   CHECKPOINT_PERIOD: 5000
 
@@ -17,7 +17,12 @@ SSL:
   TRAIN_SSL: True
   # Selected by the winning method using predicted stem-pixel proportion.
   UNLABELED_DATASET: "gwfss_unlabel_stem4500"
+  # Preserve the released project's frozen-then-reset teacher lifecycle.
+  # TopoWheat configurations override these fields with continuous EMA.
+  WARM_START: False
   BURNIN_ITER: 20000
+  EMA_UPDATE_START: -1
+  RESET_TEACHER_AT_START: True
   EMA_DECAY: 0.9996
   EVAL_WHO: "TEACHER"
 

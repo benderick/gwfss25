@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -43,10 +45,14 @@ class TopologyCorePrototypeMemory(nn.Module):
         feature_dim,
         labeled_momentum=0.95,
         pseudo_momentum=0.995,
-        temperature=0.1,
+        temperature=0.3,
         max_samples_per_class=256,
-        min_core_pixels=8,
-        hard_negative_margin=0.1,
+        max_query_pixels_per_class=128,
+        min_core_pixels=4,
+        query_mode="hard_region",
+        hard_query_fraction=0.25,
+        alignment_tolerance=0.05,
+        hard_negative_margin=0.2,
         stem_class=2,
         leaf_class=3,
     ):
@@ -58,10 +64,20 @@ class TopologyCorePrototypeMemory(nn.Module):
         self.pseudo_momentum = float(pseudo_momentum)
         self.temperature = float(temperature)
         self.max_samples_per_class = int(max_samples_per_class)
+        self.max_query_pixels_per_class = int(max_query_pixels_per_class)
         self.min_core_pixels = int(min_core_pixels)
+        self.query_mode = str(query_mode)
+        self.hard_query_fraction = float(hard_query_fraction)
+        self.alignment_tolerance = float(alignment_tolerance)
         self.hard_negative_margin = float(hard_negative_margin)
         self.stem_class = int(stem_class)
         self.leaf_class = int(leaf_class)
+        if self.query_mode not in {"centroid", "hard_region"}:
+            raise ValueError("TCPM query_mode must be centroid or hard_region")
+        if not 0.0 < self.hard_query_fraction <= 1.0:
+            raise ValueError("TCPM hard_query_fraction must be in (0, 1]")
+        if self.max_query_pixels_per_class < 1:
+            raise ValueError("TCPM max_query_pixels_per_class must be positive")
 
         shape = (self.num_domains, self.num_classes, self.feature_dim)
         flags = (self.num_domains, self.num_classes)
@@ -203,16 +219,16 @@ class TopologyCorePrototypeMemory(nn.Module):
         else:
             self.last_pseudo_drift.copy_(drift)
 
-    def _spread_indices(self, indices):
-        if indices.shape[0] <= self.max_samples_per_class:
+    def _spread_indices(self, indices, limit):
+        if indices.shape[0] <= limit:
             return indices
         positions = torch.div(
             torch.arange(
-                self.max_samples_per_class,
+                limit,
                 device=indices.device,
             )
             * indices.shape[0],
-            self.max_samples_per_class,
+            limit,
             rounding_mode="floor",
         )
         return indices[positions]
@@ -224,6 +240,7 @@ class TopologyCorePrototypeMemory(nn.Module):
         weights,
         core_mask,
         domain_ids,
+        query_mask=None,
         source="labeled",
         update_memory=True,
         pseudo_blend=0.0,
@@ -244,6 +261,14 @@ class TopologyCorePrototypeMemory(nn.Module):
         core_mask = F.interpolate(
             core_mask.unsqueeze(1).float(), size=feature_size, mode="nearest"
         ).squeeze(1).bool()
+        if query_mask is None:
+            query_mask = core_mask
+        else:
+            query_mask = F.interpolate(
+                query_mask.unsqueeze(1).float(),
+                size=feature_size,
+                mode="nearest",
+            ).squeeze(1).bool()
         features = F.normalize(features.float(), dim=1)
 
         sums = features.new_zeros(
@@ -251,6 +276,7 @@ class TopologyCorePrototypeMemory(nn.Module):
         )
         counts = features.new_zeros(self.num_domains, self.num_classes)
         centroids = []
+        query_sets = []
 
         for batch_index in range(features.shape[0]):
             domain_id = int(domain_ids[batch_index]) % self.num_domains
@@ -260,7 +286,10 @@ class TopologyCorePrototypeMemory(nn.Module):
                 indices = selected.nonzero(as_tuple=False)
                 if indices.shape[0] < self.min_core_pixels:
                     continue
-                indices = self._spread_indices(indices)
+                indices = self._spread_indices(
+                    indices,
+                    self.max_samples_per_class,
+                )
                 class_features = feature_map[indices[:, 0], indices[:, 1]]
                 class_weights = weights[batch_index, indices[:, 0], indices[:, 1]]
                 class_weights = class_weights.clamp_min(1e-6)
@@ -271,16 +300,58 @@ class TopologyCorePrototypeMemory(nn.Module):
                 counts[domain_id, class_id] += 1.0
                 centroids.append((domain_id, class_id, centroid))
 
+            if self.query_mode == "hard_region":
+                for class_id in range(self.num_classes):
+                    selected = (
+                        query_mask[batch_index]
+                        & labels[batch_index].eq(class_id)
+                    )
+                    indices = selected.nonzero(as_tuple=False)
+                    if indices.numel() == 0:
+                        continue
+                    indices = self._spread_indices(
+                        indices,
+                        self.max_query_pixels_per_class,
+                    )
+                    query_sets.append(
+                        (
+                            domain_id,
+                            class_id,
+                            feature_map[indices[:, 0], indices[:, 1]],
+                            weights[
+                                batch_index,
+                                indices[:, 0],
+                                indices[:, 1],
+                            ].clamp_min(1e-6),
+                        )
+                    )
+
         if update_memory:
             self._update_bank(sums, counts, source)
+
+        if self.query_mode == "centroid":
+            query_sets = [
+                (
+                    domain_id,
+                    class_id,
+                    centroid.unsqueeze(0),
+                    centroid.new_ones(1),
+                )
+                for domain_id, class_id, centroid in centroids
+            ]
 
         zero = features.sum() * 0.0
         contrastive_terms = []
         compact_terms = []
         hard_negative_terms = []
+        query_distance_terms = []
         reference_cache = {}
+        query_records = len(query_sets)
+        anchored_records = 0
+        hard_negative_active = features.new_zeros(())
+        hard_negative_total = features.new_zeros(())
 
-        for domain_id, class_id, centroid in centroids:
+        for domain_id, class_id, query_features, query_weights in query_sets:
             excluded_domain = domain_id if leave_one_domain_out else None
             cache_key = excluded_domain if excluded_domain is not None else -1
             if cache_key not in reference_cache:
@@ -291,24 +362,62 @@ class TopologyCorePrototypeMemory(nn.Module):
             references, available = reference_cache[cache_key]
 
             available_classes = available.nonzero(as_tuple=False).flatten()
-            if available[class_id] and available_classes.numel() >= 2:
-                logits = centroid @ references[available_classes].t()
-                target = available_classes.eq(class_id).nonzero(as_tuple=False)
-                if target.numel() > 0:
-                    contrastive_terms.append(
-                        F.cross_entropy(
-                            (logits / self.temperature).unsqueeze(0),
-                            target.flatten()[:1],
-                        )
-                    )
-            if available[class_id]:
-                compact_terms.append(
-                    1.0
-                    - F.cosine_similarity(
-                        centroid.unsqueeze(0),
-                        references[class_id].unsqueeze(0),
-                    ).mean()
+            if not available[class_id]:
+                continue
+            anchored_records += 1
+
+            positive_similarity = query_features @ references[class_id]
+            positive_distance = 1.0 - positive_similarity
+            if self.query_mode == "hard_region":
+                hard_count = max(
+                    1,
+                    int(math.ceil(
+                        query_features.shape[0] * self.hard_query_fraction
+                    )),
                 )
+                hard_indices = positive_distance.detach().topk(
+                    hard_count,
+                    largest=True,
+                    sorted=False,
+                ).indices
+                query_features = query_features[hard_indices]
+                query_weights = query_weights[hard_indices]
+                positive_similarity = positive_similarity[hard_indices]
+                positive_distance = positive_distance[hard_indices]
+
+            normalizer = query_weights.sum().clamp_min(1e-6)
+            query_distance_terms.append(
+                (positive_distance.detach() * query_weights.detach()).sum()
+                / normalizer.detach()
+            )
+
+            if available_classes.numel() >= 2:
+                logits = query_features @ references[available_classes].t()
+                target_position = available_classes.eq(class_id).nonzero(
+                    as_tuple=False
+                )
+                if target_position.numel() > 0:
+                    targets = torch.full(
+                        (query_features.shape[0],),
+                        int(target_position.flatten()[0]),
+                        device=query_features.device,
+                        dtype=torch.long,
+                    )
+                    per_query = F.cross_entropy(
+                        logits / self.temperature,
+                        targets,
+                        reduction="none",
+                    )
+                    contrastive_terms.append(
+                        (per_query * query_weights).sum() / normalizer
+                    )
+
+            compact_violation = F.relu(
+                positive_distance - self.alignment_tolerance
+            )
+            compact_terms.append(
+                (compact_violation * query_weights).sum() / normalizer
+            )
 
             if available[self.stem_class] and available[self.leaf_class]:
                 if class_id == self.stem_class:
@@ -319,18 +428,18 @@ class TopologyCorePrototypeMemory(nn.Module):
                     negative = references[self.stem_class]
                 else:
                     continue
-                positive_similarity = F.cosine_similarity(
-                    centroid.unsqueeze(0), positive.unsqueeze(0)
+                positive_similarity = query_features @ positive
+                negative_similarity = query_features @ negative
+                ranking_violation = (
+                    negative_similarity
+                    - positive_similarity
+                    + self.hard_negative_margin
                 )
-                negative_similarity = F.cosine_similarity(
-                    centroid.unsqueeze(0), negative.unsqueeze(0)
-                )
+                hard_negative_active += ranking_violation.detach().gt(0).sum()
+                hard_negative_total += ranking_violation.numel()
                 hard_negative_terms.append(
-                    F.relu(
-                        negative_similarity
-                        - positive_similarity
-                        + self.hard_negative_margin
-                    ).mean()
+                    (F.relu(ranking_violation) * query_weights).sum()
+                    / normalizer
                 )
 
         def mean_or_zero(terms):
@@ -340,4 +449,12 @@ class TopologyCorePrototypeMemory(nn.Module):
             "contrastive": mean_or_zero(contrastive_terms),
             "domain_compact": mean_or_zero(compact_terms),
             "hard_negative": mean_or_zero(hard_negative_terms),
+            "query_distance": mean_or_zero(query_distance_terms).detach(),
+            "anchor_coverage": features.new_tensor(
+                anchored_records / max(query_records, 1)
+            ),
+            "hard_negative_rate": (
+                hard_negative_active / hard_negative_total.clamp_min(1.0)
+            ).detach(),
+            "query_records": features.new_tensor(float(query_records)),
         }

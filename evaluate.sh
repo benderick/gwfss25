@@ -46,12 +46,12 @@ case "$METHOD" in
         ;;
     topowheat_global)
         CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr_train.yaml"
-        DEFAULT_CHECKPOINT="outputs/competition_topowheat_seed2025/model_best.pth"
+        DEFAULT_CHECKPOINT="outputs/competition_topowheat_hardquery_seed2025/model_best.pth"
         USE_DENSE_TTA="False"
         ;;
     topowheat_bazr)
         CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr.yaml"
-        DEFAULT_CHECKPOINT="outputs/competition_topowheat_seed2025/model_best.pth"
+        DEFAULT_CHECKPOINT="outputs/competition_topowheat_hardquery_seed2025/model_best.pth"
         USE_DENSE_TTA="False"
         ;;
     *)
@@ -72,6 +72,7 @@ command=(
     --num-machines 1
     MODEL.WEIGHTS "$CHECKPOINT"
     DATASETS.TEST "('$DATASET',)"
+    SSL.WARM_START False
     SSL.EVAL_WHO "$EVAL_WHO"
     TEST.AUG.ENABLED "$USE_DENSE_TTA"
     OUTPUT_DIR "$OUTPUT_DIR"

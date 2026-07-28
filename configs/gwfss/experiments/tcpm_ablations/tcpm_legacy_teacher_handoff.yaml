@@ -1,0 +1,7 @@
+_BASE_: ../competition_topowheat_trpl_tcpm.yaml
+
+SSL:
+  # Change only the teacher lifecycle; keep the revised TCPM curriculum.
+  BURNIN_ITER: 0
+  EMA_UPDATE_START: 20000
+  RESET_TEACHER_AT_START: True

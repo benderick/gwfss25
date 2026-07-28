@@ -392,10 +392,29 @@ def setup(args):
             raise ValueError("TCPM pseudo memory must not start before TCPM")
         if int(tcpm.MIN_CORE_PIXELS) < 1:
             raise ValueError("TCPM.MIN_CORE_PIXELS must be positive")
+        if int(tcpm.MAX_QUERY_PIXELS_PER_CLASS) < 1:
+            raise ValueError(
+                "TCPM.MAX_QUERY_PIXELS_PER_CLASS must be positive"
+            )
+        if tcpm.QUERY_MODE not in {"centroid", "hard_region"}:
+            raise ValueError("TCPM.QUERY_MODE must be centroid or hard_region")
+        if not 0.0 < float(tcpm.HARD_QUERY_FRACTION) <= 1.0:
+            raise ValueError("TCPM.HARD_QUERY_FRACTION must be in (0, 1]")
+        if float(tcpm.ALIGNMENT_TOLERANCE) < 0.0:
+            raise ValueError("TCPM.ALIGNMENT_TOLERANCE must be non-negative")
         if not 0.0 <= float(tcpm.PSEUDO_BLEND_MAX) <= 1.0:
             raise ValueError("TCPM.PSEUDO_BLEND_MAX must be in [0, 1]")
         if not 0.0 <= float(tcpm.PSEUDO_MIN_WEIGHT) <= 1.0:
             raise ValueError("TCPM.PSEUDO_MIN_WEIGHT must be in [0, 1]")
+        if not 0.0 <= float(tcpm.QUERY_MIN_WEIGHT) <= 1.0:
+            raise ValueError("TCPM.QUERY_MIN_WEIGHT must be in [0, 1]")
+    if cfg.SSL.WARM_START:
+        if int(cfg.SSL.EMA_UPDATE_START) < 0:
+            raise ValueError(
+                "Warm-started SSL requires a non-negative EMA_UPDATE_START"
+            )
+    if int(cfg.SSL.DIAGNOSTIC_PERIOD) < 0:
+        raise ValueError("SSL.DIAGNOSTIC_PERIOD must be non-negative")
     if (
         cfg.MODEL.TOPOWHEAT.BAZR.ENABLED
         and not cfg.MODEL.TOPOWHEAT.BAZR.AUX_HEADS_ENABLED
@@ -454,8 +473,6 @@ def main(args):
     cfg = setup(args)
 
     if args.eval_only:
-        model = Trainer.build_model(cfg)
-
         trainer = Trainer(cfg)
         trainer.resume_or_load(resume=args.resume)
 

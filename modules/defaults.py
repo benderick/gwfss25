@@ -406,9 +406,13 @@ class DefaultTrainer(TrainerBase):
             self._trainer = trainer_fn(
                 model, model_teacher, data_loader, data_loader_unl, optimizer
             )
-            DetectionCheckpointer(self._trainer.ensemble_model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-                cfg.SSL.TEACHER_CKPT, resume=True
-            ) # use this instead of init ema weights, should automatically match the weights even if there isn't the modelTeacher nomenclature.
+            if cfg.SSL.WARM_START:
+                self._load_warm_start_checkpoint(cfg)
+            else:
+                DetectionCheckpointer(
+                    self._trainer.ensemble_model,
+                    save_dir=cfg.OUTPUT_DIR,
+                ).resume_or_load(cfg.SSL.TEACHER_CKPT, resume=True)
         else:
             trainer_fn = AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer
             self._trainer = trainer_fn(
@@ -440,6 +444,66 @@ class DefaultTrainer(TrainerBase):
         self.cfg = cfg
 
         self.register_hooks(self.build_hooks())
+
+    def _load_warm_start_checkpoint(self, cfg):
+        """Initialize both SSL branches from one selected checkpoint branch."""
+        checkpoint_path = cfg.SSL.TEACHER_CKPT
+        if not checkpoint_path:
+            raise ValueError("SSL.WARM_START requires SSL.TEACHER_CKPT")
+
+        ensemble = self._trainer.ensemble_model
+        checkpoint_kind = self.parse_ckpt(checkpoint_path)
+        preferred = str(cfg.SSL.CKPT_TARGET).upper()
+        if preferred not in {"TEACHER", "STUDENT"}:
+            raise ValueError("SSL.CKPT_TARGET must be TEACHER or STUDENT")
+
+        if checkpoint_kind == "NEITHER":
+            source = (
+                ensemble.modelTeacher
+                if preferred == "TEACHER"
+                else ensemble.modelStudent
+            )
+            DetectionCheckpointer(source, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+                checkpoint_path,
+                resume=False,
+            )
+        else:
+            DetectionCheckpointer(
+                ensemble,
+                save_dir=cfg.OUTPUT_DIR,
+            ).resume_or_load(checkpoint_path, resume=False)
+            if checkpoint_kind == "TEACHER":
+                preferred = "TEACHER"
+            elif checkpoint_kind == "STUDENT":
+                preferred = "STUDENT"
+            source = (
+                ensemble.modelTeacher
+                if preferred == "TEACHER"
+                else ensemble.modelStudent
+            )
+
+        destination = (
+            ensemble.modelStudent
+            if source is ensemble.modelTeacher
+            else ensemble.modelTeacher
+        )
+        destination.load_state_dict(source.state_dict(), strict=True)
+        max_difference = max(
+            (
+                source_parameter.detach() - destination_parameter.detach()
+            ).abs().max().item()
+            for source_parameter, destination_parameter in zip(
+                source.parameters(),
+                destination.parameters(),
+            )
+        )
+        logging.getLogger(__name__).info(
+            "Warm-started teacher and student from %s branch of %s "
+            "(max parameter difference %.3g)",
+            preferred.lower(),
+            checkpoint_path,
+            max_difference,
+        )
 
 
     def parse_ckpt(self, ckpt_dir):
@@ -510,8 +574,21 @@ class DefaultTrainer(TrainerBase):
         Args:
             resume (bool): whether to do resume or not
         """
-        # self.checkpointer.resume_or_load(self.cfg.MODEL.WEIGHTS, resume=resume)
-        checkpoint = self.modified_checkpointer(resume)
+        if self.cfg.SSL.TRAIN_SSL and self.cfg.SSL.WARM_START:
+            if resume and self.checkpointer.has_checkpoint():
+                # Resume the complete teacher/student ensemble and optimizer
+                # state. MODEL.WEIGHTS must not select only one branch here.
+                checkpoint = self.checkpointer.resume_or_load(
+                    self.cfg.MODEL.WEIGHTS,
+                    resume=True,
+                )
+            else:
+                # Both branches were already initialized from TEACHER_CKPT in
+                # __init__. Loading MODEL.WEIGHTS now would silently overwrite
+                # the student with the generic pretraining checkpoint.
+                checkpoint = {}
+        else:
+            checkpoint = self.modified_checkpointer(resume)
 
         if resume and self.checkpointer.has_checkpoint():
             try:

@@ -920,7 +920,7 @@ def draw_tcpm_mechanism(ax, labels):
     crop_labels = crop_from_grid(labels, window[0], window[1])
     core_visual = core_sampling_visual(crop_labels)
 
-    phase_label(ax, x + 0.014, y + 0.526, "CORE PIXELS", TCPM, 0.113)
+    phase_label(ax, x + 0.014, y + 0.526, "CORE ANCHORS", TCPM, 0.113)
     phase_label(ax, x + 0.141, y + 0.526, "DUAL MEMORY", TCPM, 0.096)
     phase_label(ax, x + 0.251, y + 0.526, "ANCHORS", TCPM, 0.064)
 
@@ -964,29 +964,31 @@ def draw_tcpm_mechanism(ax, labels):
     ax.annotate("", xy=stem_point, xytext=leaf_point, arrowprops=dict(arrowstyle="<->", color=TRPL, lw=0.65), zorder=9)
     ax.text(anchor_x, y + 0.337, "stem $\leftrightarrow$ leaf", ha="center", va="center", color=TRPL, fontsize=4.5, zorder=8)
 
-    # Each centroid is queried against anchors that exclude its own domain.
+    # Clean cores write anchors; difficult reliable pixels receive gradients.
     episode_y = y + 0.164
     ax.plot([x + 0.016, x + 0.314], [episode_y + 0.092, episode_y + 0.092], color=TCPM, linewidth=0.75, zorder=5)
     ax.plot([x + 0.016, x + 0.314], [episode_y, episode_y], color=LINE, linewidth=0.45, zorder=5)
-    ax.text(x + 0.028, episode_y + 0.073, "PER-SAMPLE LODO", ha="left", va="center", color=TCPM, fontsize=5.3, fontweight="bold", zorder=7)
+    ax.text(x + 0.028, episode_y + 0.073, "LODO + HARD QUERIES", ha="left", va="center", color=TCPM, fontsize=5.0, fontweight="bold", zorder=7)
     support_x = x + 0.058
     query_x = x + 0.254
     for index, color in enumerate(colors):
         ax.add_patch(Circle((support_x + index * 0.011, episode_y + 0.035), 0.0044, facecolor=color, edgecolor=WHITE, linewidth=0.25, zorder=8))
-        ax.add_patch(Circle((query_x + index * 0.011, episode_y + 0.035), 0.0044, facecolor=color, edgecolor=WHITE, linewidth=0.25, zorder=8))
+        query_edge = TRPL if index >= 2 else WHITE
+        query_width = 0.9 if index >= 2 else 0.25
+        ax.add_patch(Circle((query_x + index * 0.011, episode_y + 0.035), 0.0044, facecolor=color, edgecolor=query_edge, linewidth=query_width, zorder=8))
     ax.text(support_x + 0.017, episode_y + 0.013, r"memory $d\ne d_i$", ha="center", va="center", color=MUTED, fontsize=4.7, zorder=8)
     ax.add_patch(Circle((x + 0.164, episode_y + 0.035), 0.017, facecolor=WHITE, edgecolor=TCPM, linewidth=0.75, zorder=7))
     ax.text(x + 0.164, episode_y + 0.035, r"$\bar q_c^{(-d_i)}$", ha="center", va="center", color=TCPM, fontsize=4.8, fontweight="bold", zorder=8)
     ax.add_patch(Rectangle((query_x - 0.010, episode_y + 0.021), 0.054, 0.034, fill=False, edgecolor=TRPL, linewidth=0.65, linestyle=(0, (2, 2)), zorder=7))
-    ax.text(query_x + 0.017, episode_y + 0.010, r"centroid $d_i$", ha="center", va="center", color=TRPL, fontsize=4.7, zorder=8)
+    ax.text(query_x + 0.017, episode_y + 0.010, "top-25% hard, conf. >= .6", ha="center", va="center", color=TRPL, fontsize=3.9, zorder=8)
     arrow(ax, (support_x + 0.058, episode_y + 0.035), (x + 0.144, episode_y + 0.035), color=TCPM, lw=0.7)
     arrow(ax, (x + 0.182, episode_y + 0.035), (query_x - 0.012, episode_y + 0.035), color=TRPL, lw=0.7, dashed=True)
-    ax.text(x + 0.302, episode_y + 0.073, "20k $q^L$ | 25k loss | 35k $q^P$ | 45k $\eta=.2$", ha="right", va="center", color=MUTED, fontsize=3.35, zorder=8)
+    ax.text(x + 0.302, episode_y + 0.073, "0 $q^L$ | 5k loss | 15k $q^P$ | 25k $\eta=.2$", ha="right", va="center", color=MUTED, fontsize=3.35, zorder=8)
 
     output_y = y + 0.070
     outputs = (
-        (x + 0.016, 0.087, TCPM, r"centroid $\leftrightarrow \bar q_c^{(-d)}$", r"$\mathcal{L}_{con}$"),
-        (x + 0.111, 0.091, TCPM, r"same-class alignment", r"$\mathcal{L}_{dom}$"),
+        (x + 0.016, 0.087, TCPM, r"hard query $\leftrightarrow \bar q_c^{(-d)}$", r"$\mathcal{L}_{con}$"),
+        (x + 0.111, 0.091, TCPM, r"tolerant alignment", r"$\mathcal{L}_{dom}$"),
         (x + 0.210, 0.104, TRPL, "hard negative", r"stem $\leftrightarrow$ leaf"),
     )
     for xx, box_w, color, upper, lower in outputs:

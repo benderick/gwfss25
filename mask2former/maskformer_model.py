@@ -124,6 +124,14 @@ class MaskFormer(nn.Module):
         self.cfg = cfg
         self.ssl_freq = self.cfg.SSL.FREQ
         self.burn_in = self.cfg.SSL.BURNIN_ITER
+        configured_ema_start = int(self.cfg.SSL.EMA_UPDATE_START)
+        self.ema_update_start = (
+            self.burn_in if configured_ema_start < 0 else configured_ema_start
+        )
+        self.reset_teacher_at_start = bool(
+            self.cfg.SSL.RESET_TEACHER_AT_START
+        )
+        self.ssl_diagnostic_period = int(self.cfg.SSL.DIAGNOSTIC_PERIOD)
         self.max_iter = self.cfg.SOLVER.MAX_ITER
         self.do_ssl = self.cfg.SSL.TRAIN_SSL
         self.ema_decay = self.cfg.SSL.EMA_DECAY
@@ -155,7 +163,13 @@ class MaskFormer(nn.Module):
                 pseudo_momentum=self.tcpm_cfg.PSEUDO_MOMENTUM,
                 temperature=self.tcpm_cfg.TEMPERATURE,
                 max_samples_per_class=self.tcpm_cfg.MAX_SAMPLES_PER_CLASS,
+                max_query_pixels_per_class=(
+                    self.tcpm_cfg.MAX_QUERY_PIXELS_PER_CLASS
+                ),
                 min_core_pixels=self.tcpm_cfg.MIN_CORE_PIXELS,
+                query_mode=self.tcpm_cfg.QUERY_MODE,
+                hard_query_fraction=self.tcpm_cfg.HARD_QUERY_FRACTION,
+                alignment_tolerance=self.tcpm_cfg.ALIGNMENT_TOLERANCE,
                 hard_negative_margin=self.tcpm_cfg.HARD_NEGATIVE_MARGIN,
                 stem_class=self.stem_class,
                 leaf_class=self.leaf_class,
@@ -497,6 +511,7 @@ class MaskFormer(nn.Module):
         labels,
         weights,
         core_mask,
+        query_mask,
         batched_inputs,
         source,
     ):
@@ -508,6 +523,9 @@ class MaskFormer(nn.Module):
             core_mask = core_mask & weights.ge(
                 float(self.tcpm_cfg.PSEUDO_MIN_WEIGHT)
             )
+            query_mask = query_mask & weights.ge(
+                float(self.tcpm_cfg.QUERY_MIN_WEIGHT)
+            )
             update_memory = state["pseudo_update"]
         else:
             update_memory = True
@@ -517,6 +535,7 @@ class MaskFormer(nn.Module):
             weights,
             core_mask,
             self._domain_ids(batched_inputs),
+            query_mask=query_mask,
             source=source,
             update_memory=update_memory,
             pseudo_blend=state["pseudo_blend"],
@@ -537,6 +556,19 @@ class MaskFormer(nn.Module):
                 "tcpm/{}_drift".format(source),
                 float(drift.item()),
             )
+            for name in (
+                "contrastive",
+                "domain_compact",
+                "hard_negative",
+                "query_distance",
+                "anchor_coverage",
+                "hard_negative_rate",
+                "query_records",
+            ):
+                storage.put_scalar(
+                    "tcpm/{}_raw_{}".format(source, name),
+                    float(losses[name].detach().item()),
+                )
         except AssertionError:
             # Direct model calls used by diagnostics may not own EventStorage.
             pass
@@ -640,6 +672,7 @@ class MaskFormer(nn.Module):
                     safe_labels,
                     valid.float(),
                     core_mask,
+                    valid,
                     batched_inputs,
                     source="labeled",
                 )
@@ -738,6 +771,7 @@ class MaskFormer(nn.Module):
                 labels,
                 weights,
                 core_mask,
+                reliable,
                 batched_inputs,
                 source="pseudo",
             )

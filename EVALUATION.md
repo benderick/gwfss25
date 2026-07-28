@@ -7,6 +7,8 @@ Training configuration `SSL.EVAL_WHO: TEACHER` evaluates the EMA teacher, and
 `model_best.pth` is selected by the teacher's validation `sem_seg/mIoU`.
 Evaluation therefore defaults to `EVAL_WHO=TEACHER`. Setting
 `EVAL_WHO=STUDENT` is intended only for a teacher/student ablation.
+The shared evaluation launcher disables Stage II warm-start initialization so
+that `MODEL.WEIGHTS` is loaded directly as the checkpoint under evaluation.
 
 Stage 1 checkpoints contain the supervised model under `modelTeacher.*`.
 

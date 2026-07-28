@@ -1,5 +1,14 @@
 _BASE_: competition_stage2_stem4500.yaml
 
+SSL:
+  # Initialize both branches from the selected Stage I checkpoint and keep
+  # the EMA trajectory continuous throughout Stage II.
+  WARM_START: True
+  BURNIN_ITER: 0
+  EMA_UPDATE_START: 0
+  RESET_TEACHER_AT_START: False
+  DIAGNOSTIC_PERIOD: 5000
+
 MODEL:
   SEM_SEG_HEAD:
     # TopoWheat excludes the SAPA upsampler used by the competition method.
