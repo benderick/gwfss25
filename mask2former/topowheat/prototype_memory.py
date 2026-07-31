@@ -72,6 +72,20 @@ class TopologyCorePrototypeMemory(nn.Module):
         self.hard_negative_margin = float(hard_negative_margin)
         self.stem_class = int(stem_class)
         self.leaf_class = int(leaf_class)
+        if self.num_domains < 1 or self.num_classes < 2 or self.feature_dim < 1:
+            raise ValueError("TCPM dimensions must be positive")
+        if not 0.0 <= self.labeled_momentum < 1.0:
+            raise ValueError("TCPM labeled momentum must be in [0, 1)")
+        if not 0.0 <= self.pseudo_momentum < 1.0:
+            raise ValueError("TCPM pseudo momentum must be in [0, 1)")
+        if self.temperature <= 0.0:
+            raise ValueError("TCPM temperature must be positive")
+        if self.max_samples_per_class < 1 or self.min_core_pixels < 1:
+            raise ValueError("TCPM sampling limits must be positive")
+        if not 0 <= self.stem_class < self.num_classes:
+            raise ValueError("TCPM stem class is out of range")
+        if not 0 <= self.leaf_class < self.num_classes:
+            raise ValueError("TCPM leaf class is out of range")
         if self.query_mode not in {"centroid", "hard_region"}:
             raise ValueError("TCPM query_mode must be centroid or hard_region")
         if not 0.0 < self.hard_query_fraction <= 1.0:
@@ -88,6 +102,22 @@ class TopologyCorePrototypeMemory(nn.Module):
         self.register_buffer("memory_started", torch.tensor(False, dtype=torch.bool))
         self.register_buffer("last_labeled_drift", torch.tensor(0.0))
         self.register_buffer("last_pseudo_drift", torch.tensor(0.0))
+        self.register_buffer(
+            "last_labeled_candidate_counts",
+            torch.zeros(flags),
+        )
+        self.register_buffer(
+            "last_pseudo_candidate_counts",
+            torch.zeros(flags),
+        )
+        self.register_buffer(
+            "labeled_update_counts",
+            torch.zeros(flags),
+        )
+        self.register_buffer(
+            "pseudo_update_counts",
+            torch.zeros(flags),
+        )
 
     @torch.no_grad()
     def reset_memory(self):
@@ -97,6 +127,10 @@ class TopologyCorePrototypeMemory(nn.Module):
         self.pseudo_initialized.zero_()
         self.last_labeled_drift.zero_()
         self.last_pseudo_drift.zero_()
+        self.last_labeled_candidate_counts.zero_()
+        self.last_pseudo_candidate_counts.zero_()
+        self.labeled_update_counts.zero_()
+        self.pseudo_update_counts.zero_()
         self.memory_started.fill_(True)
 
     def _load_from_state_dict(
@@ -125,6 +159,14 @@ class TopologyCorePrototypeMemory(nn.Module):
             "memory_started": self.memory_started,
             "last_labeled_drift": self.last_labeled_drift,
             "last_pseudo_drift": self.last_pseudo_drift,
+            "last_labeled_candidate_counts": (
+                self.last_labeled_candidate_counts
+            ),
+            "last_pseudo_candidate_counts": (
+                self.last_pseudo_candidate_counts
+            ),
+            "labeled_update_counts": self.labeled_update_counts,
+            "pseudo_update_counts": self.pseudo_update_counts,
         }
         for name, value in defaults.items():
             state_dict.setdefault(prefix + name, value.detach().clone())
@@ -145,7 +187,10 @@ class TopologyCorePrototypeMemory(nn.Module):
     def _aggregate_bank(self, prototypes, initialized, excluded_domain=None):
         valid = initialized.clone()
         if excluded_domain is not None:
-            valid[int(excluded_domain) % self.num_domains] = False
+            excluded_domain = int(excluded_domain)
+            if not 0 <= excluded_domain < self.num_domains:
+                raise ValueError("TCPM excluded domain is out of range")
+            valid[excluded_domain] = False
         weights = valid.to(dtype=prototypes.dtype).unsqueeze(-1)
         counts = weights.sum(dim=0)
         aggregated = (prototypes * weights).sum(dim=0) / counts.clamp_min(1.0)
@@ -183,13 +228,19 @@ class TopologyCorePrototypeMemory(nn.Module):
             bank = self.labeled_prototypes
             initialized = self.labeled_initialized
             momentum = self.labeled_momentum
+            last_candidates = self.last_labeled_candidate_counts
+            update_counts = self.labeled_update_counts
         elif source == "pseudo":
             bank = self.pseudo_prototypes
             initialized = self.pseudo_initialized
             momentum = self.pseudo_momentum
+            last_candidates = self.last_pseudo_candidate_counts
+            update_counts = self.pseudo_update_counts
         else:
             raise ValueError("TCPM source must be 'labeled' or 'pseudo'")
 
+        last_candidates.copy_(counts)
+        update_counts.add_(counts)
         drift_terms = []
         for domain_id in range(self.num_domains):
             for class_id in range(self.num_classes):
@@ -218,6 +269,20 @@ class TopologyCorePrototypeMemory(nn.Module):
             self.last_labeled_drift.copy_(drift)
         else:
             self.last_pseudo_drift.copy_(drift)
+
+    @torch.no_grad()
+    def _record_candidates_without_update(self, counts, source):
+        counts = counts.clone()
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(counts)
+        if source == "labeled":
+            self.last_labeled_candidate_counts.copy_(counts)
+            self.last_labeled_drift.zero_()
+        elif source == "pseudo":
+            self.last_pseudo_candidate_counts.copy_(counts)
+            self.last_pseudo_drift.zero_()
+        else:
+            raise ValueError("TCPM source must be 'labeled' or 'pseudo'")
 
     def _spread_indices(self, indices, limit):
         if indices.shape[0] <= limit:
@@ -250,6 +315,8 @@ class TopologyCorePrototypeMemory(nn.Module):
             raise ValueError("TCPM features must have shape [N, C, H, W]")
         if source not in {"labeled", "pseudo"}:
             raise ValueError("TCPM source must be 'labeled' or 'pseudo'")
+        if len(domain_ids) != features.shape[0]:
+            raise ValueError("TCPM needs one domain id per feature map")
 
         feature_size = features.shape[-2:]
         labels = F.interpolate(
@@ -279,7 +346,14 @@ class TopologyCorePrototypeMemory(nn.Module):
         query_sets = []
 
         for batch_index in range(features.shape[0]):
-            domain_id = int(domain_ids[batch_index]) % self.num_domains
+            domain_id = int(domain_ids[batch_index])
+            if not 0 <= domain_id < self.num_domains:
+                raise ValueError(
+                    "TCPM domain id {} is outside [0, {})".format(
+                        domain_id,
+                        self.num_domains,
+                    )
+                )
             feature_map = features[batch_index].permute(1, 2, 0)
             for class_id in range(self.num_classes):
                 selected = core_mask[batch_index] & labels[batch_index].eq(class_id)
@@ -328,6 +402,8 @@ class TopologyCorePrototypeMemory(nn.Module):
 
         if update_memory:
             self._update_bank(sums, counts, source)
+        else:
+            self._record_candidates_without_update(counts, source)
 
         if self.query_mode == "centroid":
             query_sets = [

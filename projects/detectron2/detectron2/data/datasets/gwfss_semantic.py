@@ -9,6 +9,7 @@ import os
 
 from .. import DatasetCatalog, MetadataCatalog
 from detectron2.utils.file_io import PathManager
+from .gwfss_domains import infer_gwfss_domain
 
 """
 This file contains functions to register the Cityscapes panoptic dataset to the DatasetCatalog.
@@ -57,6 +58,7 @@ def load_gwfss_semantic(image_dir, gt_dir):
     files = get_gwfss_semantic_files(image_dir, gt_dir)
     ret = []
     for image_file, label_file, segments_info in files:
+        domain_id, domain_name = infer_gwfss_domain(image_file)
         ret.append(
             {
                 "file_name": image_file,
@@ -64,6 +66,8 @@ def load_gwfss_semantic(image_dir, gt_dir):
                     os.path.splitext(os.path.basename(image_file))[0]
                 ),
                 "sem_seg_file_name": label_file,
+                "domain_id": domain_id,
+                "domain_name": domain_name,
             }
         )
     assert len(ret), f"No images found in {image_dir}!"

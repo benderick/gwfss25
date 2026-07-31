@@ -35,15 +35,13 @@ from .topowheat import (
     TopologyCorePrototypeMemory,
     build_core_mask,
     build_trpl_targets,
+    centerline_recall_loss,
     masked_dice_loss,
     masked_nll_loss,
     query_semantic_probabilities,
     soft_cldice_loss,
     tcpm_curriculum_state,
 )
-from .topowheat.topology import soft_skeletonize
-
-
 @META_ARCH_REGISTRY.register()
 class MaskFormer(nn.Module):
     """
@@ -457,6 +455,10 @@ class MaskFormer(nn.Module):
             persistence=self.trpl_cfg.PERSISTENCE,
             skeleton_iterations=self.trpl_cfg.SKELETON_ITERATIONS,
             boundary_radius=self.trpl_cfg.BOUNDARY_RADIUS,
+            boundary_min_stem_probability=(
+                self.trpl_cfg.BOUNDARY_MIN_STEM_PROBABILITY
+            ),
+            skeleton_match_radius=self.trpl_cfg.SKELETON_MATCH_RADIUS,
             core_strategy=self.tcpm_cfg.CORE_STRATEGY,
             core_erode_iterations=self.trpl_cfg.CORE_ERODE_ITERATIONS,
             core_stem_radius=self.trpl_cfg.CORE_STEM_RADIUS,
@@ -481,10 +483,21 @@ class MaskFormer(nn.Module):
         return labels
 
     def _domain_ids(self, batched_inputs):
-        return [
-            int(sample.get("domain_id", 0)) % int(self.tcpm_cfg.NUM_DOMAINS)
-            for sample in batched_inputs
-        ]
+        num_domains = int(self.tcpm_cfg.NUM_DOMAINS)
+        domain_ids = []
+        for sample in batched_inputs:
+            if "domain_id" not in sample:
+                raise ValueError("TCPM requires domain_id in every dataset record")
+            domain_id = int(sample["domain_id"])
+            if not 0 <= domain_id < num_domains:
+                raise ValueError(
+                    "domain_id {} is outside configured range [0, {})".format(
+                        domain_id,
+                        num_domains,
+                    )
+                )
+            domain_ids.append(domain_id)
+        return domain_ids
 
     def _tcpm_start_iter(self):
         configured = int(self.tcpm_cfg.START_ITER)
@@ -510,6 +523,7 @@ class MaskFormer(nn.Module):
         outputs,
         labels,
         weights,
+        confidence,
         core_mask,
         query_mask,
         batched_inputs,
@@ -520,14 +534,22 @@ class MaskFormer(nn.Module):
             return {}
         self._ensure_tcpm_started()
         if source == "pseudo":
-            core_mask = core_mask & weights.ge(
+            raw_core_mask = core_mask
+            raw_query_mask = query_mask
+            core_mask = raw_core_mask & weights.ge(
                 float(self.tcpm_cfg.PSEUDO_MIN_WEIGHT)
             )
-            query_mask = query_mask & weights.ge(
+            if confidence is not None:
+                core_mask &= confidence.ge(
+                    float(self.tcpm_cfg.PSEUDO_MIN_CONFIDENCE)
+                )
+            query_mask = raw_query_mask & weights.ge(
                 float(self.tcpm_cfg.QUERY_MIN_WEIGHT)
             )
             update_memory = state["pseudo_update"]
         else:
+            raw_core_mask = core_mask
+            raw_query_mask = query_mask
             update_memory = True
         losses = self.prototype_memory(
             outputs["mask_features"],
@@ -547,6 +569,16 @@ class MaskFormer(nn.Module):
             storage = get_event_storage()
             storage.put_scalar("tcpm/loss_scale", state["loss_scale"])
             storage.put_scalar("tcpm/pseudo_blend", state["pseudo_blend"])
+            storage.put_scalar(
+                "tcpm/{}_core_pixel_acceptance".format(source),
+                float(core_mask.sum().item())
+                / max(float(raw_core_mask.sum().item()), 1.0),
+            )
+            storage.put_scalar(
+                "tcpm/{}_query_pixel_acceptance".format(source),
+                float(query_mask.sum().item())
+                / max(float(raw_query_mask.sum().item()), 1.0),
+            )
             drift = (
                 self.prototype_memory.last_pseudo_drift
                 if source == "pseudo"
@@ -568,6 +600,40 @@ class MaskFormer(nn.Module):
                 storage.put_scalar(
                     "tcpm/{}_raw_{}".format(source, name),
                     float(losses[name].detach().item()),
+                )
+            if source == "pseudo":
+                initialized = self.prototype_memory.pseudo_initialized
+                candidates = (
+                    self.prototype_memory.last_pseudo_candidate_counts
+                )
+                cumulative = self.prototype_memory.pseudo_update_counts
+            else:
+                initialized = self.prototype_memory.labeled_initialized
+                candidates = (
+                    self.prototype_memory.last_labeled_candidate_counts
+                )
+                cumulative = self.prototype_memory.labeled_update_counts
+            storage.put_scalar(
+                "tcpm/{}_memory_candidates".format(source),
+                float(candidates.sum().item()),
+            )
+            storage.put_scalar(
+                "tcpm/{}_memory_initialized".format(source),
+                float(initialized.sum().item()),
+            )
+            for class_id in range(self.sem_seg_head.num_classes):
+                prefix = "tcpm/{}_class_{}".format(source, class_id)
+                storage.put_scalar(
+                    prefix + "_initialized_domains",
+                    float(initialized[:, class_id].sum().item()),
+                )
+                storage.put_scalar(
+                    prefix + "_candidates",
+                    float(candidates[:, class_id].sum().item()),
+                )
+                storage.put_scalar(
+                    prefix + "_cumulative_updates",
+                    float(cumulative[:, class_id].sum().item()),
                 )
         except AssertionError:
             # Direct model calls used by diagnostics may not own EventStorage.
@@ -651,6 +717,7 @@ class MaskFormer(nn.Module):
                     stem_target,
                     valid=valid.unsqueeze(1),
                     iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+                    skip_empty_target=True,
                 )
                 * float(self.trpl_cfg.SUPERVISED_TOPOLOGY_WEIGHT)
             )
@@ -671,6 +738,7 @@ class MaskFormer(nn.Module):
                     outputs,
                     safe_labels,
                     valid.float(),
+                    None,
                     core_mask,
                     valid,
                     batched_inputs,
@@ -709,6 +777,7 @@ class MaskFormer(nn.Module):
     ):
         labels = target["labels"].to(self.device)
         weights = target["weights"].to(self.device)
+        confidence = target["confidence"].to(self.device)
         reliable = target["reliable"].to(self.device)
         stable_skeleton = target["stable_skeleton"].to(self.device)
         core_mask = target["core_mask"].to(self.device)
@@ -738,31 +807,27 @@ class MaskFormer(nn.Module):
             :, self.stem_class : self.stem_class + 1
         ]
         teacher_stem = labels.eq(self.stem_class).unsqueeze(1)
-        topology_valid = (
-            reliable | stable_skeleton
-        ).unsqueeze(1)
+        topology_valid = reliable.unsqueeze(1)
         losses["loss_trpl_topology_ssl"] = (
             soft_cldice_loss(
                 student_stem,
                 teacher_stem,
                 valid=topology_valid,
                 iterations=self.trpl_cfg.SKELETON_ITERATIONS,
+                skip_empty_target=True,
             )
             * float(self.trpl_cfg.TOPOLOGY_LOSS_WEIGHT)
         )
-        student_skeleton = soft_skeletonize(
-            student_stem,
-            iterations=self.trpl_cfg.SKELETON_ITERATIONS,
-        )
         skeleton_target = stable_skeleton.unsqueeze(1).float()
-        skeleton_intersection = (student_skeleton * skeleton_target).sum()
-        skeleton_dice = 1.0 - (
-            2.0 * skeleton_intersection + 1.0
-        ) / (
-            student_skeleton.sum() + skeleton_target.sum() + 1.0
-        )
         losses["loss_trpl_skeleton_ssl"] = (
-            skeleton_dice * float(self.trpl_cfg.SKELETON_LOSS_WEIGHT)
+            centerline_recall_loss(
+                student_stem,
+                skeleton_target,
+                tolerance_radius=(
+                    self.trpl_cfg.CENTERLINE_TOLERANCE_RADIUS
+                ),
+            )
+            * float(self.trpl_cfg.SKELETON_LOSS_WEIGHT)
         )
 
         if self.tcpm_enabled and self._tcpm_state()["active"]:
@@ -770,6 +835,7 @@ class MaskFormer(nn.Module):
                 outputs,
                 labels,
                 weights,
+                confidence,
                 core_mask,
                 reliable,
                 batched_inputs,

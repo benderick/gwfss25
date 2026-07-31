@@ -366,6 +366,76 @@ def setup(args):
         and not cfg.MODEL.TOPOWHEAT.TRPL.ENABLED
     ):
         raise ValueError("TCPM requires TRPL reliable core targets")
+    topowheat = cfg.MODEL.TOPOWHEAT
+    if (
+        topowheat.TRPL.ENABLED
+        or topowheat.TCPM.ENABLED
+        or topowheat.BAZR.ENABLED
+        or topowheat.BAZR.AUX_HEADS_ENABLED
+    ):
+        num_classes = int(cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES)
+        if not 0 <= int(topowheat.STEM_CLASS) < num_classes:
+            raise ValueError("TOPOWHEAT.STEM_CLASS is out of range")
+        if not 0 <= int(topowheat.LEAF_CLASS) < num_classes:
+            raise ValueError("TOPOWHEAT.LEAF_CLASS is out of range")
+        if int(topowheat.STEM_CLASS) == int(topowheat.LEAF_CLASS):
+            raise ValueError("TOPOWHEAT stem and leaf classes must differ")
+    if cfg.MODEL.TOPOWHEAT.TRPL.ENABLED:
+        trpl = cfg.MODEL.TOPOWHEAT.TRPL
+        num_classes = int(cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES)
+        if len(trpl.CLASS_THRESHOLDS) != num_classes:
+            raise ValueError(
+                "TRPL.CLASS_THRESHOLDS must contain one value per class"
+            )
+        if any(
+            not 0.0 <= float(threshold) <= 1.0
+            for threshold in trpl.CLASS_THRESHOLDS
+        ):
+            raise ValueError("TRPL class thresholds must be in [0, 1]")
+        if not trpl.VIEW_SCALES:
+            raise ValueError("TRPL requires at least one view scale")
+        if any(float(scale) <= 0.0 for scale in trpl.VIEW_SCALES):
+            raise ValueError("TRPL view scales must be positive")
+        if float(trpl.UNCERTAINTY_TEMPERATURE) <= 0.0:
+            raise ValueError(
+                "TRPL.UNCERTAINTY_TEMPERATURE must be positive"
+            )
+        if float(trpl.UNCERTAINTY_WEIGHT) < 0.0:
+            raise ValueError("TRPL.UNCERTAINTY_WEIGHT must be non-negative")
+        if float(trpl.MAX_UNCERTAINTY) < 0.0:
+            raise ValueError("TRPL.MAX_UNCERTAINTY must be non-negative")
+        if not 0.0 <= float(trpl.SKELETON_THRESHOLD) <= 1.0:
+            raise ValueError("TRPL.SKELETON_THRESHOLD must be in [0, 1]")
+        if not 0.0 < float(trpl.PERSISTENCE) <= 1.0:
+            raise ValueError("TRPL.PERSISTENCE must be in (0, 1]")
+        if int(trpl.SKELETON_ITERATIONS) < 0:
+            raise ValueError("TRPL.SKELETON_ITERATIONS must be non-negative")
+        if int(trpl.SKELETON_MATCH_RADIUS) < 0:
+            raise ValueError("TRPL.SKELETON_MATCH_RADIUS must be non-negative")
+        if int(trpl.BOUNDARY_RADIUS) < 0:
+            raise ValueError("TRPL.BOUNDARY_RADIUS must be non-negative")
+        if int(trpl.CENTERLINE_TOLERANCE_RADIUS) < 0:
+            raise ValueError(
+                "TRPL.CENTERLINE_TOLERANCE_RADIUS must be non-negative"
+            )
+        if not 0.0 <= float(trpl.BOUNDARY_MIN_STEM_PROBABILITY) <= 1.0:
+            raise ValueError(
+                "TRPL.BOUNDARY_MIN_STEM_PROBABILITY must be in [0, 1]"
+            )
+        if int(trpl.CORE_ERODE_ITERATIONS) < 0:
+            raise ValueError("TRPL.CORE_ERODE_ITERATIONS must be non-negative")
+        if int(trpl.CORE_STEM_RADIUS) < 0:
+            raise ValueError("TRPL.CORE_STEM_RADIUS must be non-negative")
+        for name in (
+            "REGION_LOSS_WEIGHT",
+            "DICE_LOSS_WEIGHT",
+            "TOPOLOGY_LOSS_WEIGHT",
+            "SKELETON_LOSS_WEIGHT",
+            "SUPERVISED_TOPOLOGY_WEIGHT",
+            "LEGACY_QUERY_LOSS_WEIGHT",
+        ):
+            if float(getattr(trpl, name)) < 0.0:
+                raise ValueError("TRPL.{} must be non-negative".format(name))
     if cfg.MODEL.TOPOWHEAT.TCPM.CORE_STRATEGY not in {
         "reliable",
         "eroded",
@@ -374,6 +444,23 @@ def setup(args):
         raise ValueError("Unknown TCPM prototype core strategy")
     if cfg.MODEL.TOPOWHEAT.TCPM.ENABLED:
         tcpm = cfg.MODEL.TOPOWHEAT.TCPM
+        if int(tcpm.NUM_DOMAINS) < 1:
+            raise ValueError("TCPM.NUM_DOMAINS must be positive")
+        if not 0.0 <= float(tcpm.LABELED_MOMENTUM) < 1.0:
+            raise ValueError("TCPM.LABELED_MOMENTUM must be in [0, 1)")
+        if not 0.0 <= float(tcpm.PSEUDO_MOMENTUM) < 1.0:
+            raise ValueError("TCPM.PSEUDO_MOMENTUM must be in [0, 1)")
+        if float(tcpm.TEMPERATURE) <= 0.0:
+            raise ValueError("TCPM.TEMPERATURE must be positive")
+        if int(tcpm.MAX_SAMPLES_PER_CLASS) < 1:
+            raise ValueError("TCPM.MAX_SAMPLES_PER_CLASS must be positive")
+        for name in (
+            "MEMORY_WARMUP_ITERS",
+            "LOSS_RAMP_ITERS",
+            "PSEUDO_RAMP_ITERS",
+        ):
+            if int(getattr(tcpm, name)) < 0:
+                raise ValueError("TCPM.{} must be non-negative".format(name))
         start_iter = (
             cfg.SSL.BURNIN_ITER
             if int(tcpm.START_ITER) < 0
@@ -402,12 +489,29 @@ def setup(args):
             raise ValueError("TCPM.HARD_QUERY_FRACTION must be in (0, 1]")
         if float(tcpm.ALIGNMENT_TOLERANCE) < 0.0:
             raise ValueError("TCPM.ALIGNMENT_TOLERANCE must be non-negative")
+        if float(tcpm.HARD_NEGATIVE_MARGIN) < 0.0:
+            raise ValueError("TCPM.HARD_NEGATIVE_MARGIN must be non-negative")
         if not 0.0 <= float(tcpm.PSEUDO_BLEND_MAX) <= 1.0:
             raise ValueError("TCPM.PSEUDO_BLEND_MAX must be in [0, 1]")
         if not 0.0 <= float(tcpm.PSEUDO_MIN_WEIGHT) <= 1.0:
             raise ValueError("TCPM.PSEUDO_MIN_WEIGHT must be in [0, 1]")
+        if not 0.0 <= float(tcpm.PSEUDO_MIN_CONFIDENCE) <= 1.0:
+            raise ValueError(
+                "TCPM.PSEUDO_MIN_CONFIDENCE must be in [0, 1]"
+            )
         if not 0.0 <= float(tcpm.QUERY_MIN_WEIGHT) <= 1.0:
             raise ValueError("TCPM.QUERY_MIN_WEIGHT must be in [0, 1]")
+        if float(tcpm.PSEUDO_MIN_WEIGHT) < float(tcpm.QUERY_MIN_WEIGHT):
+            raise ValueError(
+                "TCPM pseudo-memory reliability must not be below query reliability"
+            )
+        for name in (
+            "CONTRASTIVE_WEIGHT",
+            "DOMAIN_COMPACT_WEIGHT",
+            "HARD_NEGATIVE_WEIGHT",
+        ):
+            if float(getattr(tcpm, name)) < 0.0:
+                raise ValueError("TCPM.{} must be non-negative".format(name))
     if cfg.SSL.WARM_START:
         if int(cfg.SSL.EMA_UPDATE_START) < 0:
             raise ValueError(

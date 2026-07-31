@@ -79,15 +79,13 @@ def load_gwfss_semantic(image_dir, gt_dir):
 
 def load_gwfss_semantic_domains(image_root, gt_root, domains):
     records = []
-    for domain_id, domain in enumerate(domains):
+    for domain in domains:
         domain_records = load_gwfss_semantic(
             os.path.join(image_root, domain),
             os.path.join(gt_root, domain),
         )
         for record in domain_records:
             record["image_id"] = "{}/{}".format(domain, record["image_id"])
-            record["domain_id"] = domain_id
-            record["domain_name"] = domain
         records.extend(domain_records)
     return records
 

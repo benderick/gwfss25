@@ -12,9 +12,12 @@ MODEL:
       PSEUDO_RAMP_ITERS: 10000
       LEAVE_ONE_DOMAIN_OUT: True
       MIN_CORE_PIXELS: 4
-      PSEUDO_MIN_WEIGHT: 0.80
+      # The entropy-derived reliability weight is not a class probability.
+      # Combine a moderate reliability floor with an explicit semantic gate.
+      PSEUDO_MIN_WEIGHT: 0.50
+      PSEUDO_MIN_CONFIDENCE: 0.80
       QUERY_MODE: "hard_region"
-      QUERY_MIN_WEIGHT: 0.60
+      QUERY_MIN_WEIGHT: 0.25
       MAX_QUERY_PIXELS_PER_CLASS: 128
       HARD_QUERY_FRACTION: 0.25
       ALIGNMENT_TOLERANCE: 0.05

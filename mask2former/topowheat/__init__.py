@@ -3,6 +3,7 @@ from .selective_zoom import BAZRFusionGate, BrokenAwareZoomRefiner
 from .topology import (
     build_core_mask,
     build_trpl_targets,
+    centerline_recall_loss,
     endpoint_map,
     masked_dice_loss,
     masked_nll_loss,
@@ -17,6 +18,7 @@ __all__ = [
     "tcpm_curriculum_state",
     "build_core_mask",
     "build_trpl_targets",
+    "centerline_recall_loss",
     "endpoint_map",
     "masked_dice_loss",
     "masked_nll_loss",

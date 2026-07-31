@@ -18,6 +18,11 @@ MODEL:
       ENABLED: True
       VIEW_SCALES: [1.0, 0.75]
       CLASS_THRESHOLDS: [0.70, 0.70, 0.55, 0.70]
+      # Require both aligned teacher views, with one-pixel matching tolerance.
+      PERSISTENCE: 1.0
+      SKELETON_MATCH_RADIUS: 1
+      BOUNDARY_MIN_STEM_PROBABILITY: 0.20
+      CENTERLINE_TOLERANCE_RADIUS: 1
       LEGACY_QUERY_LOSS_WEIGHT: 0.0
     TCPM:
       ENABLED: False

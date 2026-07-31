@@ -135,9 +135,11 @@ def build_trpl_targets(
     max_uncertainty=0.75,
     stem_class=2,
     skeleton_threshold=0.35,
-    persistence=0.5,
+    persistence=1.0,
     skeleton_iterations=20,
     boundary_radius=2,
+    boundary_min_stem_probability=0.20,
+    skeleton_match_radius=1,
     core_strategy="topology",
     core_erode_iterations=2,
     core_stem_radius=1,
@@ -146,8 +148,18 @@ def build_trpl_targets(
     if not view_probabilities:
         raise ValueError("TRPL requires at least one teacher view")
     shape = view_probabilities[0].shape
+    if len(shape) != 4 or shape[1] < 2:
+        raise ValueError("TRPL views must have shape [N, C, H, W] with C > 1")
     if any(prob.shape != shape for prob in view_probabilities):
         raise ValueError("All TRPL views must be aligned and have identical shapes")
+    if not 0 <= int(stem_class) < shape[1]:
+        raise ValueError("TRPL stem class is out of range")
+    if not 0.0 < float(persistence) <= 1.0:
+        raise ValueError("TRPL persistence must be in (0, 1]")
+    if int(skeleton_match_radius) < 0 or int(boundary_radius) < 0:
+        raise ValueError("TRPL morphology radii must be non-negative")
+    if not 0.0 <= float(boundary_min_stem_probability) <= 1.0:
+        raise ValueError("TRPL boundary stem probability must be in [0, 1]")
 
     eps = 1e-6
     probabilities = [prob.float().clamp_min(eps) for prob in view_probabilities]
@@ -192,21 +204,41 @@ def build_trpl_targets(
         skeletons.append(
             soft_skeletonize(stem_probability, skeleton_iterations)
             .ge(skeleton_threshold)
-            .float()
         )
-    persistence_map = torch.stack(skeletons, dim=0).mean(dim=0)
-    stable_skeleton = persistence_map.ge(persistence).squeeze(1)
-    stable_skeleton &= labels.eq(stem_class)
+
+    # Match skeleton evidence within a small spatial tolerance, then place the
+    # final centreline on the skeleton of the mean teacher prediction. This
+    # avoids accepting a one-view-only skeleton while remaining robust to
+    # one-pixel shifts introduced by rescaling.
+    skeleton_support = [
+        _binary_dilate(skeleton, skeleton_match_radius)
+        for skeleton in skeletons
+    ]
+    persistence_map = torch.stack(
+        [support.float() for support in skeleton_support],
+        dim=0,
+    ).mean(dim=0)
+    mean_stem_skeleton = hard_skeletonize(
+        mean_prob[:, stem_class : stem_class + 1],
+        iterations=skeleton_iterations,
+        threshold=skeleton_threshold,
+    )
+    stable_skeleton = (
+        mean_stem_skeleton & persistence_map.ge(float(persistence))
+    ).squeeze(1)
 
     reliable_stem = reliable & labels.eq(stem_class)
+    structural_stem = reliable_stem | stable_skeleton
     stem_neighbourhood = _binary_dilate(
-        reliable_stem.unsqueeze(1),
+        structural_stem.unsqueeze(1),
         boundary_radius,
     ).squeeze(1)
     uncertain_boundary = (
-        labels.eq(stem_class)
-        & ~reliable_stem
-        & stem_neighbourhood
+        stem_neighbourhood
+        & ~structural_stem
+        & mean_prob[:, stem_class].ge(
+            float(boundary_min_stem_probability)
+        )
     )
     reliable &= ~uncertain_boundary
 
@@ -228,7 +260,9 @@ def build_trpl_targets(
         "weights": weights,
         "reliable": reliable,
         "uncertainty": uncertainty,
+        "confidence": confidence,
         "stable_skeleton": stable_skeleton,
+        "skeleton_persistence": persistence_map.squeeze(1),
         "uncertain_boundary": uncertain_boundary,
         "core_mask": core_mask,
     }
@@ -238,7 +272,10 @@ def masked_nll_loss(probabilities, labels, weights, valid, eps=1e-6):
     log_probabilities = probabilities.clamp_min(eps).log()
     per_pixel = F.nll_loss(log_probabilities, labels, reduction="none")
     pixel_weights = weights.float() * valid.float()
-    return (per_pixel * pixel_weights).sum() / pixel_weights.sum().clamp_min(1.0)
+    # Normalize by accepted pixels, not by confidence mass. Consequently a
+    # uniformly low-confidence pseudo-label contributes less than a uniformly
+    # confident one instead of having the scale cancel out.
+    return (per_pixel * pixel_weights).sum() / valid.float().sum().clamp_min(1.0)
 
 
 def masked_dice_loss(
@@ -260,8 +297,15 @@ def masked_dice_loss(
     ).sum(dim=(0, 2, 3))
     present = (one_hot * pixel_weights).sum(dim=(0, 2, 3)).gt(0)
     dice = (2.0 * intersection + eps) / (denominator + eps)
+    target_mass = (one_hot * valid.float().unsqueeze(1)).sum(dim=(0, 2, 3))
+    target_confidence = (
+        (one_hot * pixel_weights).sum(dim=(0, 2, 3))
+        / target_mass.clamp_min(1.0)
+    )
     if present.any():
-        return 1.0 - dice[present].mean()
+        return (
+            (1.0 - dice[present]) * target_confidence[present]
+        ).mean()
     return probabilities.sum() * 0.0
 
 
@@ -271,6 +315,7 @@ def soft_cldice_loss(
     valid=None,
     iterations=20,
     eps=1.0,
+    skip_empty_target=False,
 ):
     prediction = prediction.float().clamp(0.0, 1.0)
     target = target.float().clamp(0.0, 1.0)
@@ -293,4 +338,39 @@ def soft_cldice_loss(
         * topology_sensitivity
         / (topology_precision + topology_sensitivity).clamp_min(1e-6)
     )
-    return 1.0 - cldice.mean()
+    losses = 1.0 - cldice
+    if skip_empty_target:
+        present = target.sum(dim=(1, 2, 3)).gt(0)
+        if present.any():
+            return losses[present].mean()
+        return prediction.sum() * 0.0
+    return losses.mean()
+
+
+def centerline_recall_loss(
+    prediction,
+    target,
+    tolerance_radius=1,
+    eps=1.0,
+):
+    """Encourage observed centreline evidence without penalizing unknown branches."""
+    if prediction.ndim != 4 or target.ndim != 4:
+        raise ValueError("prediction and target must have shape [N, 1, H, W]")
+    prediction = prediction.float().clamp(0.0, 1.0)
+    target = target.float().clamp(0.0, 1.0)
+    radius = max(int(tolerance_radius), 0)
+    if radius:
+        prediction = F.max_pool2d(
+            prediction,
+            kernel_size=2 * radius + 1,
+            stride=1,
+            padding=radius,
+        )
+
+    target_mass = target.sum(dim=(1, 2, 3))
+    overlap = (prediction * target).sum(dim=(1, 2, 3))
+    losses = 1.0 - (overlap + eps) / (target_mass + eps)
+    present = target_mass.gt(0)
+    if present.any():
+        return losses[present].mean()
+    return prediction.sum() * 0.0
