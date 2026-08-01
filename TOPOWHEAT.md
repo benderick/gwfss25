@@ -67,7 +67,8 @@ The competition's anonymous domains are aligned with the named unlabelled
 folders as follows: domain1--domain9 correspond to CIMMYT, ETHZ, INRAE, NJAU,
 RRES, ULiege, UQ, USASK, and UTokyo. The mapping was verified against matching
 images in the complete labelled release for the first eight domains; UTokyo is
-the sole remaining competition source for domain9.
+the sole remaining competition source for domain9. The held-out test domain0
+corresponds to Arvalis and uses the distinct internal domain id 9.
 
 ### BAZR
 

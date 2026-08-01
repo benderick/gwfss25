@@ -35,22 +35,22 @@ esac
 
 case "$METHOD" in
     project_global)
-        CONFIG_FILE="configs/gwfss/experiments/competition_stage2_stem4500.yaml"
+        DEFAULT_CONFIG_FILE="configs/gwfss/experiments/competition_stage2_stem4500.yaml"
         DEFAULT_CHECKPOINT="outputs/competition_stage2_stem4500_seed2025/model_best.pth"
         USE_DENSE_TTA="False"
         ;;
     project_zoom)
-        CONFIG_FILE="configs/gwfss/experiments/competition_stage2_stem4500.yaml"
+        DEFAULT_CONFIG_FILE="configs/gwfss/experiments/competition_stage2_stem4500.yaml"
         DEFAULT_CHECKPOINT="outputs/competition_stage2_stem4500_seed2025/model_best.pth"
         USE_DENSE_TTA="True"
         ;;
     topowheat_global)
-        CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr_train.yaml"
+        DEFAULT_CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr_train.yaml"
         DEFAULT_CHECKPOINT="outputs/competition_topowheat_hardquery_seed2025/model_best.pth"
         USE_DENSE_TTA="False"
         ;;
     topowheat_bazr)
-        CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr.yaml"
+        DEFAULT_CONFIG_FILE="configs/gwfss/experiments/competition_topowheat_bazr.yaml"
         DEFAULT_CHECKPOINT="outputs/competition_topowheat_hardquery_seed2025/model_best.pth"
         USE_DENSE_TTA="False"
         ;;
@@ -61,6 +61,7 @@ case "$METHOD" in
         ;;
 esac
 
+CONFIG_FILE="${CONFIG_FILE:-$DEFAULT_CONFIG_FILE}"
 CHECKPOINT="${CHECKPOINT:-$DEFAULT_CHECKPOINT}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/eval_${METHOD}_${SPLIT}}"
 

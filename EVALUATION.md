@@ -61,6 +61,15 @@ CHECKPOINT=outputs/competition_topowheat_seed2025/model_best.pth \
 bash topowheat_eval.sh
 ```
 
+The no-TCPM TRPL checkpoint must also use its matching model configuration:
+
+```bash
+SPLIT=test MODE=global \
+CONFIG_FILE=configs/gwfss/experiments/competition_topowheat_trpl.yaml \
+CHECKPOINT=outputs/competition_topowheat_trpl_seed2025/model_best.pth \
+bash topowheat_eval.sh
+```
+
 All output folders are separated by method and split under `outputs/`. The
 important console/log entries are `sem_seg/mIoU`, `sem_seg/IoU-background`,
 `sem_seg/IoU-head`, `sem_seg/IoU-stem`, and `sem_seg/IoU-leaf`. Dense project
