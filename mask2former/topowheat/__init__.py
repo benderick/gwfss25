@@ -7,6 +7,8 @@ from .topology import (
     endpoint_map,
     masked_dice_loss,
     masked_nll_loss,
+    masked_soft_cross_entropy,
+    positive_probability_floor_loss,
     query_semantic_probabilities,
     soft_cldice_loss,
 )
@@ -22,6 +24,8 @@ __all__ = [
     "endpoint_map",
     "masked_dice_loss",
     "masked_nll_loss",
+    "masked_soft_cross_entropy",
+    "positive_probability_floor_loss",
     "query_semantic_probabilities",
     "soft_cldice_loss",
 ]

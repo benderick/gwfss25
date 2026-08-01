@@ -38,6 +38,8 @@ from .topowheat import (
     centerline_recall_loss,
     masked_dice_loss,
     masked_nll_loss,
+    masked_soft_cross_entropy,
+    positive_probability_floor_loss,
     query_semantic_probabilities,
     soft_cldice_loss,
     tcpm_curriculum_state,
@@ -453,12 +455,17 @@ class MaskFormer(nn.Module):
             stem_class=self.stem_class,
             skeleton_threshold=self.trpl_cfg.SKELETON_THRESHOLD,
             persistence=self.trpl_cfg.PERSISTENCE,
+            support_persistence=self.trpl_cfg.SUPPORT_PERSISTENCE,
             skeleton_iterations=self.trpl_cfg.SKELETON_ITERATIONS,
             boundary_radius=self.trpl_cfg.BOUNDARY_RADIUS,
             boundary_min_stem_probability=(
                 self.trpl_cfg.BOUNDARY_MIN_STEM_PROBABILITY
             ),
             skeleton_match_radius=self.trpl_cfg.SKELETON_MATCH_RADIUS,
+            stem_support_radius=self.trpl_cfg.STEM_SUPPORT_RADIUS,
+            stem_support_min_probability=(
+                self.trpl_cfg.STEM_SUPPORT_MIN_PROBABILITY
+            ),
             core_strategy=self.tcpm_cfg.CORE_STRATEGY,
             core_erode_iterations=self.trpl_cfg.CORE_ERODE_ITERATIONS,
             core_stem_radius=self.trpl_cfg.CORE_STEM_RADIUS,
@@ -502,6 +509,18 @@ class MaskFormer(nn.Module):
     def _tcpm_start_iter(self):
         configured = int(self.tcpm_cfg.START_ITER)
         return self.burn_in if configured < 0 else configured
+
+    def _trpl_loss_scale(self):
+        start_iter = int(self.trpl_cfg.START_ITER)
+        ramp_iters = int(self.trpl_cfg.RAMP_ITERS)
+        if self.iter < start_iter:
+            return 0.0
+        if ramp_iters <= 0:
+            return 1.0
+        return min(
+            max((self.iter - start_iter) / float(ramp_iters), 0.0),
+            1.0,
+        )
 
     def _tcpm_state(self):
         return tcpm_curriculum_state(
@@ -707,6 +726,29 @@ class MaskFormer(nn.Module):
         probabilities = self._semantic_probabilities(outputs, target_size)
 
         if self.trpl_enabled:
+            region_nll = masked_nll_loss(
+                probabilities,
+                safe_labels,
+                valid.float(),
+                valid,
+                class_balanced=bool(
+                    self.trpl_cfg.CLASS_BALANCED_NLL
+                ),
+                num_classes=self.sem_seg_head.num_classes,
+                min_class_pixels=self.trpl_cfg.MIN_CLASS_PIXELS,
+            )
+            region_dice = masked_dice_loss(
+                probabilities,
+                safe_labels,
+                valid.float(),
+                valid,
+                num_classes=self.sem_seg_head.num_classes,
+            )
+            losses["loss_trpl_region_sup"] = (
+                region_nll
+                + float(self.trpl_cfg.SUPERVISED_DICE_WEIGHT)
+                * region_dice
+            ) * float(self.trpl_cfg.SUPERVISED_REGION_WEIGHT)
             stem_probability = probabilities[
                 :, self.stem_class : self.stem_class + 1
             ]
@@ -769,6 +811,87 @@ class MaskFormer(nn.Module):
             )
         return losses
 
+    def _log_trpl_diagnostics(
+        self,
+        probabilities,
+        labels,
+        reliable,
+        target,
+    ):
+        period = max(int(self.ssl_diagnostic_period), 0)
+        if not period or self.iter % period != 0:
+            return
+        try:
+            storage = get_event_storage()
+        except AssertionError:
+            return
+
+        student_labels = probabilities.detach().argmax(dim=1)
+        total_pixels = max(float(labels.numel()), 1.0)
+        storage.put_scalar("trpl/loss_scale", self._trpl_loss_scale())
+        storage.put_scalar(
+            "trpl/legacy_query_weight",
+            float(self.trpl_cfg.LEGACY_QUERY_LOSS_WEIGHT)
+            * self._trpl_loss_scale(),
+        )
+        storage.put_scalar(
+            "trpl/reliable_fraction",
+            float(reliable.sum().item()) / total_pixels,
+        )
+        for class_id in range(self.sem_seg_head.num_classes):
+            teacher_class = labels.eq(class_id)
+            storage.put_scalar(
+                "trpl/teacher_class_{}_fraction".format(class_id),
+                float(teacher_class.sum().item()) / total_pixels,
+            )
+            storage.put_scalar(
+                "trpl/reliable_class_{}_fraction".format(class_id),
+                float((teacher_class & reliable).sum().item()) / total_pixels,
+            )
+            storage.put_scalar(
+                "trpl/student_class_{}_fraction".format(class_id),
+                float(student_labels.eq(class_id).sum().item()) / total_pixels,
+            )
+
+        stable_skeleton = target["stable_skeleton"].to(self.device)
+        support_skeleton = target["support_skeleton"].to(self.device)
+        stem_support = target["stem_support"].to(self.device)
+        uncertain_boundary = target["uncertain_boundary"].to(self.device)
+        for name, mask in (
+            ("stable_skeleton", stable_skeleton),
+            ("support_skeleton", support_skeleton),
+            ("stem_support", stem_support),
+            ("uncertain_boundary", uncertain_boundary),
+        ):
+            storage.put_scalar(
+                "trpl/{}_fraction".format(name),
+                float(mask.sum().item()) / total_pixels,
+            )
+
+        teacher_stem_pixels = labels.eq(self.stem_class).sum()
+        student_stem_pixels = student_labels.eq(self.stem_class).sum()
+        storage.put_scalar(
+            "trpl/student_teacher_stem_area_ratio",
+            float(student_stem_pixels.item())
+            / max(float(teacher_stem_pixels.item()), 1.0),
+        )
+        support_pixels = max(float(stem_support.sum().item()), 1.0)
+        student_stem = probabilities.detach()[:, self.stem_class]
+        storage.put_scalar(
+            "trpl/stem_support_floor_coverage",
+            float(
+                (
+                    student_stem.ge(
+                        float(
+                            self.trpl_cfg.STEM_SUPPORT_PROBABILITY_FLOOR
+                        )
+                    )
+                    & stem_support
+                ).sum().item()
+            )
+            / support_pixels,
+        )
+
     def _semi_supervised_topowheat_losses(
         self,
         outputs,
@@ -779,10 +902,20 @@ class MaskFormer(nn.Module):
         weights = target["weights"].to(self.device)
         confidence = target["confidence"].to(self.device)
         reliable = target["reliable"].to(self.device)
+        teacher_probabilities = target["probabilities"].to(self.device)
         stable_skeleton = target["stable_skeleton"].to(self.device)
+        stem_support = target["stem_support"].to(self.device)
+        uncertain_boundary = target["uncertain_boundary"].to(self.device)
         core_mask = target["core_mask"].to(self.device)
         target_size = labels.shape[-2:]
         probabilities = self._semantic_probabilities(outputs, target_size)
+        trpl_scale = self._trpl_loss_scale()
+        self._log_trpl_diagnostics(
+            probabilities,
+            labels,
+            reliable,
+            target,
+        )
 
         losses = {}
         region_nll = masked_nll_loss(
@@ -790,6 +923,9 @@ class MaskFormer(nn.Module):
             labels,
             weights,
             reliable,
+            class_balanced=bool(self.trpl_cfg.CLASS_BALANCED_NLL),
+            num_classes=self.sem_seg_head.num_classes,
+            min_class_pixels=self.trpl_cfg.MIN_CLASS_PIXELS,
         )
         region_dice = masked_dice_loss(
             probabilities,
@@ -801,7 +937,18 @@ class MaskFormer(nn.Module):
         losses["loss_trpl_region_ssl"] = (
             region_nll
             + float(self.trpl_cfg.DICE_LOSS_WEIGHT) * region_dice
-        ) * float(self.trpl_cfg.REGION_LOSS_WEIGHT)
+        ) * float(self.trpl_cfg.REGION_LOSS_WEIGHT) * trpl_scale
+
+        losses["loss_trpl_boundary_ssl"] = (
+            masked_soft_cross_entropy(
+                probabilities,
+                teacher_probabilities,
+                weights,
+                uncertain_boundary,
+            )
+            * float(self.trpl_cfg.BOUNDARY_DISTILLATION_WEIGHT)
+            * trpl_scale
+        )
 
         student_stem = probabilities[
             :, self.stem_class : self.stem_class + 1
@@ -817,6 +964,7 @@ class MaskFormer(nn.Module):
                 skip_empty_target=True,
             )
             * float(self.trpl_cfg.TOPOLOGY_LOSS_WEIGHT)
+            * trpl_scale
         )
         skeleton_target = stable_skeleton.unsqueeze(1).float()
         losses["loss_trpl_skeleton_ssl"] = (
@@ -828,6 +976,30 @@ class MaskFormer(nn.Module):
                 ),
             )
             * float(self.trpl_cfg.SKELETON_LOSS_WEIGHT)
+            * trpl_scale
+        )
+        teacher_stem_probability = teacher_probabilities[
+            :, self.stem_class : self.stem_class + 1
+        ]
+        support_minimum = float(
+            self.trpl_cfg.STEM_SUPPORT_MIN_PROBABILITY
+        )
+        support_strength = (
+            (teacher_stem_probability - support_minimum)
+            / max(1.0 - support_minimum, 1e-6)
+        ).clamp(0.0, 1.0)
+        support_weights = 0.25 + 0.75 * support_strength
+        losses["loss_trpl_stem_support_ssl"] = (
+            positive_probability_floor_loss(
+                student_stem,
+                stem_support,
+                probability_floor=(
+                    self.trpl_cfg.STEM_SUPPORT_PROBABILITY_FLOOR
+                ),
+                weights=support_weights,
+            )
+            * float(self.trpl_cfg.STEM_SUPPORT_LOSS_WEIGHT)
+            * trpl_scale
         )
 
         if self.tcpm_enabled and self._tcpm_state()["active"]:
@@ -873,6 +1045,7 @@ class MaskFormer(nn.Module):
                     * float(self.bazr_cfg.FUSION_LOSS_WEIGHT)
                 )
                 * float(self.bazr_cfg.AUX_LOSS_WEIGHT)
+                * trpl_scale
             )
         return losses
 
@@ -1124,7 +1297,7 @@ class MaskFormer(nn.Module):
                 )
                 legacy_weight = float(
                     self.trpl_cfg.LEGACY_QUERY_LOSS_WEIGHT
-                )
+                ) * self._trpl_loss_scale()
                 if legacy_weight > 0:
                     legacy_losses = self.ssl_criterion(
                         outputs,

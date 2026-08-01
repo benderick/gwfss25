@@ -136,10 +136,13 @@ def build_trpl_targets(
     stem_class=2,
     skeleton_threshold=0.35,
     persistence=1.0,
+    support_persistence=0.5,
     skeleton_iterations=20,
     boundary_radius=2,
     boundary_min_stem_probability=0.20,
     skeleton_match_radius=1,
+    stem_support_radius=2,
+    stem_support_min_probability=0.15,
     core_strategy="topology",
     core_erode_iterations=2,
     core_stem_radius=1,
@@ -156,10 +159,20 @@ def build_trpl_targets(
         raise ValueError("TRPL stem class is out of range")
     if not 0.0 < float(persistence) <= 1.0:
         raise ValueError("TRPL persistence must be in (0, 1]")
-    if int(skeleton_match_radius) < 0 or int(boundary_radius) < 0:
+    if not 0.0 < float(support_persistence) <= float(persistence):
+        raise ValueError(
+            "TRPL support persistence must be in (0, persistence]"
+        )
+    if (
+        int(skeleton_match_radius) < 0
+        or int(boundary_radius) < 0
+        or int(stem_support_radius) < 0
+    ):
         raise ValueError("TRPL morphology radii must be non-negative")
     if not 0.0 <= float(boundary_min_stem_probability) <= 1.0:
         raise ValueError("TRPL boundary stem probability must be in [0, 1]")
+    if not 0.0 <= float(stem_support_min_probability) <= 1.0:
+        raise ValueError("TRPL stem support probability must be in [0, 1]")
 
     eps = 1e-6
     probabilities = [prob.float().clamp_min(eps) for prob in view_probabilities]
@@ -226,9 +239,21 @@ def build_trpl_targets(
     stable_skeleton = (
         mean_stem_skeleton & persistence_map.ge(float(persistence))
     ).squeeze(1)
+    support_skeleton = (
+        mean_stem_skeleton
+        & persistence_map.ge(float(support_persistence))
+    ).squeeze(1)
+
+    stem_support = _binary_dilate(
+        support_skeleton.unsqueeze(1),
+        stem_support_radius,
+    ).squeeze(1)
+    stem_support &= mean_prob[:, stem_class].ge(
+        float(stem_support_min_probability)
+    )
 
     reliable_stem = reliable & labels.eq(stem_class)
-    structural_stem = reliable_stem | stable_skeleton
+    structural_stem = reliable_stem | support_skeleton
     stem_neighbourhood = _binary_dilate(
         structural_stem.unsqueeze(1),
         boundary_radius,
@@ -262,20 +287,104 @@ def build_trpl_targets(
         "uncertainty": uncertainty,
         "confidence": confidence,
         "stable_skeleton": stable_skeleton,
+        "support_skeleton": support_skeleton,
+        "stem_support": stem_support,
         "skeleton_persistence": persistence_map.squeeze(1),
         "uncertain_boundary": uncertain_boundary,
         "core_mask": core_mask,
     }
 
 
-def masked_nll_loss(probabilities, labels, weights, valid, eps=1e-6):
+def masked_nll_loss(
+    probabilities,
+    labels,
+    weights,
+    valid,
+    eps=1e-6,
+    class_balanced=False,
+    num_classes=None,
+    min_class_pixels=1,
+):
     log_probabilities = probabilities.clamp_min(eps).log()
     per_pixel = F.nll_loss(log_probabilities, labels, reduction="none")
     pixel_weights = weights.float() * valid.float()
+    if class_balanced:
+        if num_classes is None:
+            num_classes = probabilities.shape[1]
+        class_ids = torch.arange(
+            int(num_classes),
+            device=labels.device,
+        ).view(1, -1, 1, 1)
+        class_valid = (
+            labels.unsqueeze(1).eq(class_ids)
+            & valid.unsqueeze(1).bool()
+        )
+        counts = class_valid.sum(dim=(0, 2, 3)).float()
+        weighted_losses = (
+            per_pixel.unsqueeze(1)
+            * pixel_weights.unsqueeze(1)
+            * class_valid.float()
+        ).sum(dim=(0, 2, 3))
+        present = counts.ge(max(int(min_class_pixels), 1))
+        if present.any():
+            return (weighted_losses[present] / counts[present]).mean()
+        return probabilities.sum() * 0.0
     # Normalize by accepted pixels, not by confidence mass. Consequently a
     # uniformly low-confidence pseudo-label contributes less than a uniformly
     # confident one instead of having the scale cancel out.
     return (per_pixel * pixel_weights).sum() / valid.float().sum().clamp_min(1.0)
+
+
+def masked_soft_cross_entropy(
+    probabilities,
+    target_probabilities,
+    weights,
+    valid,
+    eps=1e-6,
+):
+    """Distill uncertain pixels without converting them to hard negatives."""
+    if probabilities.shape != target_probabilities.shape:
+        raise ValueError("Soft TRPL targets must match student probabilities")
+    per_pixel = -(
+        target_probabilities.float()
+        * probabilities.float().clamp_min(eps).log()
+    ).sum(dim=1)
+    pixel_weights = weights.float() * valid.float()
+    return (
+        (per_pixel * pixel_weights).sum()
+        / valid.float().sum().clamp_min(1.0)
+    )
+
+
+def positive_probability_floor_loss(
+    prediction,
+    support,
+    probability_floor=0.55,
+    weights=None,
+):
+    """Prevent a supported thin structure from shrinking below a safe floor."""
+    if prediction.ndim != 4 or prediction.shape[1] != 1:
+        raise ValueError("prediction must have shape [N, 1, H, W]")
+    if support.ndim == 3:
+        support = support.unsqueeze(1)
+    if support.shape != prediction.shape:
+        raise ValueError("support must match prediction spatial dimensions")
+    floor = float(probability_floor)
+    if not 0.0 < floor <= 1.0:
+        raise ValueError("probability_floor must be in (0, 1]")
+    support = support.float()
+    if weights is None:
+        weights = torch.ones_like(prediction)
+    elif weights.ndim == 3:
+        weights = weights.unsqueeze(1)
+    if weights.shape != prediction.shape:
+        raise ValueError("weights must match prediction spatial dimensions")
+    violation = F.relu(floor - prediction.float().clamp(0.0, 1.0)) / floor
+    pixel_weights = support * weights.float()
+    return (
+        (violation.square() * pixel_weights).sum()
+        / support.sum().clamp_min(1.0)
+    )
 
 
 def masked_dice_loss(

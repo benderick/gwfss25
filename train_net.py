@@ -408,6 +408,12 @@ def setup(args):
             raise ValueError("TRPL.SKELETON_THRESHOLD must be in [0, 1]")
         if not 0.0 < float(trpl.PERSISTENCE) <= 1.0:
             raise ValueError("TRPL.PERSISTENCE must be in (0, 1]")
+        if not 0.0 < float(trpl.SUPPORT_PERSISTENCE) <= float(
+            trpl.PERSISTENCE
+        ):
+            raise ValueError(
+                "TRPL.SUPPORT_PERSISTENCE must be in (0, PERSISTENCE]"
+            )
         if int(trpl.SKELETON_ITERATIONS) < 0:
             raise ValueError("TRPL.SKELETON_ITERATIONS must be non-negative")
         if int(trpl.SKELETON_MATCH_RADIUS) < 0:
@@ -418,6 +424,18 @@ def setup(args):
             raise ValueError(
                 "TRPL.CENTERLINE_TOLERANCE_RADIUS must be non-negative"
             )
+        if int(trpl.STEM_SUPPORT_RADIUS) < 0:
+            raise ValueError("TRPL.STEM_SUPPORT_RADIUS must be non-negative")
+        if not 0.0 <= float(trpl.STEM_SUPPORT_MIN_PROBABILITY) <= 1.0:
+            raise ValueError(
+                "TRPL.STEM_SUPPORT_MIN_PROBABILITY must be in [0, 1]"
+            )
+        if not 0.0 < float(
+            trpl.STEM_SUPPORT_PROBABILITY_FLOOR
+        ) <= 1.0:
+            raise ValueError(
+                "TRPL.STEM_SUPPORT_PROBABILITY_FLOOR must be in (0, 1]"
+            )
         if not 0.0 <= float(trpl.BOUNDARY_MIN_STEM_PROBABILITY) <= 1.0:
             raise ValueError(
                 "TRPL.BOUNDARY_MIN_STEM_PROBABILITY must be in [0, 1]"
@@ -426,11 +444,23 @@ def setup(args):
             raise ValueError("TRPL.CORE_ERODE_ITERATIONS must be non-negative")
         if int(trpl.CORE_STEM_RADIUS) < 0:
             raise ValueError("TRPL.CORE_STEM_RADIUS must be non-negative")
+        if int(trpl.START_ITER) < 0:
+            raise ValueError("TRPL.START_ITER must be non-negative")
+        if int(trpl.RAMP_ITERS) < 0:
+            raise ValueError("TRPL.RAMP_ITERS must be non-negative")
+        if int(trpl.MIN_CLASS_PIXELS) < 1:
+            raise ValueError("TRPL.MIN_CLASS_PIXELS must be positive")
+        if int(trpl.START_ITER) >= int(cfg.SOLVER.MAX_ITER):
+            raise ValueError("TRPL.START_ITER must be before training ends")
         for name in (
             "REGION_LOSS_WEIGHT",
             "DICE_LOSS_WEIGHT",
+            "BOUNDARY_DISTILLATION_WEIGHT",
             "TOPOLOGY_LOSS_WEIGHT",
             "SKELETON_LOSS_WEIGHT",
+            "STEM_SUPPORT_LOSS_WEIGHT",
+            "SUPERVISED_REGION_WEIGHT",
+            "SUPERVISED_DICE_WEIGHT",
             "SUPERVISED_TOPOLOGY_WEIGHT",
             "LEGACY_QUERY_LOSS_WEIGHT",
         ):
@@ -517,6 +547,8 @@ def setup(args):
             raise ValueError(
                 "Warm-started SSL requires a non-negative EMA_UPDATE_START"
             )
+    if not 0.0 <= float(cfg.SSL.EMA_DECAY) < 1.0:
+        raise ValueError("SSL.EMA_DECAY must be in [0, 1)")
     if int(cfg.SSL.DIAGNOSTIC_PERIOD) < 0:
         raise ValueError("SSL.DIAGNOSTIC_PERIOD must be non-negative")
     if (
