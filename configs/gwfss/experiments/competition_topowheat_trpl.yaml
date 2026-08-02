@@ -11,8 +11,8 @@ SSL:
   DIAGNOSTIC_PERIOD: 2500
 
 SOLVER:
-  # Stage II starts from the selected supervised checkpoint. A short, low-LR
-  # adaptation avoids hundreds of additional passes over the 99 labeled images.
+  # Keep the v2 optimization budget so the refactor remains a controlled
+  # mechanism comparison; validation still selects the best checkpoint.
   BASE_LR: 0.00005
   MAX_ITER: 30000
   CHECKPOINT_PERIOD: 2500
@@ -27,32 +27,10 @@ MODEL:
   TOPOWHEAT:
     TRPL:
       ENABLED: True
-      VIEW_SCALES: [1.0, 0.875]
-      CLASS_THRESHOLDS: [0.70, 0.70, 0.55, 0.70]
-      # Strict consensus remains the topology core. One-view support is used
-      # only by the low-weight recall guard and never enters prototype memory.
-      PERSISTENCE: 1.0
-      SUPPORT_PERSISTENCE: 0.5
-      SKELETON_MATCH_RADIUS: 1
-      BOUNDARY_MIN_STEM_PROBABILITY: 0.20
-      CENTERLINE_TOLERANCE_RADIUS: 1
-      STEM_SUPPORT_RADIUS: 2
-      STEM_SUPPORT_MIN_PROBABILITY: 0.15
-      STEM_SUPPORT_PROBABILITY_FLOOR: 0.55
-      START_ITER: 0
+      VIEW_SCALE: 0.875
+      RELIABILITY_THRESHOLD: 0.75
+      TOPOLOGY_WEIGHT: 0.5
       RAMP_ITERS: 5000
-      CLASS_BALANCED_NLL: True
-      MIN_CLASS_PIXELS: 32
-      REGION_LOSS_WEIGHT: 1.0
-      DICE_LOSS_WEIGHT: 0.5
-      BOUNDARY_DISTILLATION_WEIGHT: 0.25
-      TOPOLOGY_LOSS_WEIGHT: 0.5
-      SKELETON_LOSS_WEIGHT: 0.10
-      STEM_SUPPORT_LOSS_WEIGHT: 0.25
-      SUPERVISED_REGION_WEIGHT: 0.25
-      SUPERVISED_DICE_WEIGHT: 0.5
-      SUPERVISED_TOPOLOGY_WEIGHT: 0.2
-      LEGACY_QUERY_LOSS_WEIGHT: 0.05
     TCPM:
       ENABLED: False
     BAZR:

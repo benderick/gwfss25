@@ -21,4 +21,5 @@ python3 -W ignore train_net.py \
     --num-gpus "$NUM_GPUS" \
     --num-machines 1 \
     SSL.TEACHER_CKPT "$TEACHER_CKPT" \
-    OUTPUT_DIR "$OUTPUT_DIR"
+    OUTPUT_DIR "$OUTPUT_DIR" \
+    "$@"

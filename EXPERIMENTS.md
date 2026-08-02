@@ -1,11 +1,22 @@
 # GWFSS experiment protocol
 
+## Execution workflow
+
+This checkout is used for code changes, static checks, and log analysis only;
+it is not expected to contain the training runtime or datasets. Training and
+evaluation run on a separate machine. Runtime errors and metrics are copied
+back here for diagnosis, then code changes are synchronized to that machine.
+
+The fixed Stage I result for current TopoWheat comparisons is validation mIoU
+`73.10942` and competition-test mIoU `69.4389`. Checkpoints and hyperparameters
+must be selected on validation; the test result is a locked final comparison.
+
 ## 1. What is the baseline?
 
 The paper's baseline is BEiTv2-L + ViT-Adapter + Mask2Former with standard
 bilinear FPN upsampling, trained only on the 99 labelled competition images.
-It excludes SAPA, guided distillation, and test-time scaling. The paper reports
-0.7284 mIoU for this setting on the development set.
+It excludes SAPA, guided distillation, and test-time scaling. Its measured
+result in the frozen current protocol is the Stage I result recorded above.
 
 The released `stage1_train.sh` was not this pure baseline: SAPA was hard-coded
 inside the pixel decoder. The experiment configs now separate the stages:
@@ -17,10 +28,10 @@ inside the pixel decoder. The experiment configs now separate the stages:
 | `competition_stage2_stem4500.yaml` | 99 | prior stem-aware 4,500 | SAPA | off |
 | `competition_stage2_random4500.yaml` | 99 | random balanced 4,500 | SAPA | off |
 | `competition_stage2_all.yaml` | 99 | 64,368 | SAPA | off |
-| `competition_topowheat_trpl.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL | off |
-| `competition_topowheat_trpl_tcpm.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL + TCPM | off |
+| `competition_topowheat_trpl.yaml` | 99 | prior stem-aware 4,500 | bilinear + TRPL | off |
+| `competition_topowheat_trpl_tcpm.yaml` | 99 | prior stem-aware 4,500 | bilinear + TRPL + TCPM | off |
 | `competition_topowheat_bazr_train.yaml` | 99 | prior stem-aware 4,500 | full training-time method | off |
-| `competition_topowheat_bazr.yaml` | 99 | prior stem-aware 4,500 | SAPA + TRPL + TCPM | BAZR |
+| `competition_topowheat_bazr.yaml` | 99 | prior stem-aware 4,500 | bilinear + TRPL + TCPM | BAZR |
 
 TTA must remain disabled in training ablations. Evaluate the zoom-in/multi-scale
 stage separately so training improvements are not mixed with inference cost.

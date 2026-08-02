@@ -9,24 +9,26 @@ therefore keep their original model structure and loss path.
 ### TRPL
 
 `MODEL.TOPOWHEAT.TRPL.ENABLED` enables topology-reliable pseudo-label
-learning. The EMA teacher predicts aligned weak views at the scales listed in
-`VIEW_SCALES`. Query predictions are composed into semantic probabilities and
-used to calculate:
+learning. The EMA teacher predicts one original-scale weak view and one view at
+`VIEW_SCALE`. Query predictions are composed into aligned semantic
+probabilities and used to calculate:
 
-- normalized predictive entropy and multi-view Jensen-Shannon disagreement;
-- class-adaptive reliable regions and continuous confidence weights;
-- persistent stem skeletons across views;
-- uncertain stem boundaries excluded from hard region supervision.
+- one reliability score: mean confidence times one minus view disagreement;
+- a reliable semantic region selected by one global threshold;
+- a stable stem centreline shared by both views within one-pixel tolerance;
+- uncertain stem boundaries excluded from semantic supervision.
 
-The student receives weighted semantic NLL and Dice losses, soft-clDice, and a
-stable-skeleton consistency loss. A supervised stem topology loss is also
-applied to labelled images. Set `LEGACY_QUERY_LOSS_WEIGHT` above zero only when
-testing a hybrid with the released hard query pseudo-label loss.
+The student receives a class-balanced soft KL loss on the reliable region and
+a positive centreline likelihood loss on stable topology evidence. TRPL does
+not add losses to labelled images and does not mix in the legacy query
+pseudo-label objective. Its only active hyperparameters are `VIEW_SCALE`,
+`RELIABILITY_THRESHOLD`, `TOPOLOGY_WEIGHT`, and `RAMP_ITERS`; morphology and
+spatial tolerance are fixed implementation choices.
 
 ### TCPM
 
 `MODEL.TOPOWHEAT.TCPM.ENABLED` adds a topology-core prototype memory. Stem
-prototypes use the persistent skeleton and its narrow neighbourhood; other
+prototypes use the stable dual-view skeleton and its narrow neighbourhood; other
 classes use eroded reliable interiors. Labelled and pseudo-labelled cores are
 stored in separate class-by-domain banks. For each sample, the loss reads an
 anchor aggregated from every available domain except that sample's own
@@ -53,13 +55,14 @@ TopoWheat configuration; the SAPA checkpoint belongs to the released-project
 baseline and is not a compatible TopoWheat warm start. TCPM writes only the
 labelled bank during iterations 0--5k, ramps its losses during 5k--15k, admits
 pseudo cores with confidence at least 0.8 at 15k, and ramps their anchor
-contribution to 0.2 by 25k. Pseudo queries use a separate 0.6 reliability gate.
+contribution to 0.2 by 25k. Pseudo queries use separate reliability and
+semantic-confidence gates.
 `CORE_STRATEGY` selects `reliable`, `eroded`, or `topology` anchor evidence;
 `QUERY_MODE` selects the diagnostic centroid path or the default hard-region
 path. `LEAVE_ONE_DOMAIN_OUT` controls per-sample domain exclusion.
 
 TensorBoard logs the teacher EMA decay, a chunked full-model teacher--student
-parameter RMS every 5k iterations, bank drift, raw TCPM losses, hard-query
+parameter RMS every 2,500 iterations, bank drift, raw TCPM losses, hard-query
 distance, anchor coverage, and stem--leaf ranking activation. A raw loss near
 zero is therefore distinguishable from a batch with no available anchor.
 
@@ -98,6 +101,12 @@ exclusive so their compute and gains can be measured separately.
 | `competition_topowheat_bazr_train.yaml` | on | on | on | off |
 | `competition_topowheat_bazr.yaml` | on | on | on | on |
 
+## Reference baseline
+
+The selected Stage I supervised baseline has validation mIoU `73.10942` and
+competition-test mIoU `69.4389`. TRPL and later modules must be compared
+against these fixed values using a validation-selected checkpoint.
+
 ## Commands
 
 Create the architecture-matched supervised warm start when it is not already
@@ -121,10 +130,10 @@ The default warm start is
 diagnosed run, for example, used
 `outputs/competition_baseline_v0/model_best.pth`.
 
-Start the revised TCPM in a new `OUTPUT_DIR` without `--resume`. Use `--resume`
-only to continue a checkpoint produced by the same revised configuration; a
-checkpoint from the diagnosed centroid-query run contains a different training
-state and schedule.
+Start the refactored TRPL, with or without TCPM, in a new `OUTPUT_DIR` without
+`--resume`. Use `--resume` only to continue a checkpoint produced by this
+four-parameter TRPL implementation. A v2 TRPL/TCPM checkpoint has a different
+loss graph and optimizer history even though its model weights remain readable.
 
 Train the TRPL ablation:
 
@@ -133,6 +142,10 @@ CONFIG_FILE=configs/gwfss/experiments/competition_topowheat_trpl.yaml \
 OUTPUT_DIR=outputs/competition_topowheat_trpl_seed2025 \
 bash topowheat_train.sh
 ```
+
+For a remote smoke test, append configuration overrides after the script, for
+example `SOLVER.MAX_ITER 20 TEST.EVAL_PERIOD 0 SOLVER.CHECKPOINT_PERIOD 20`.
+Use a disposable output directory for that run.
 
 Train the pure TRPL+TCPM ablation without BAZR heads:
 

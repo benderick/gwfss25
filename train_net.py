@@ -382,90 +382,16 @@ def setup(args):
             raise ValueError("TOPOWHEAT stem and leaf classes must differ")
     if cfg.MODEL.TOPOWHEAT.TRPL.ENABLED:
         trpl = cfg.MODEL.TOPOWHEAT.TRPL
-        num_classes = int(cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES)
-        if len(trpl.CLASS_THRESHOLDS) != num_classes:
+        if not 0.0 < float(trpl.VIEW_SCALE) < 1.0:
+            raise ValueError("TRPL.VIEW_SCALE must be in (0, 1)")
+        if not 0.0 < float(trpl.RELIABILITY_THRESHOLD) < 1.0:
             raise ValueError(
-                "TRPL.CLASS_THRESHOLDS must contain one value per class"
+                "TRPL.RELIABILITY_THRESHOLD must be in (0, 1)"
             )
-        if any(
-            not 0.0 <= float(threshold) <= 1.0
-            for threshold in trpl.CLASS_THRESHOLDS
-        ):
-            raise ValueError("TRPL class thresholds must be in [0, 1]")
-        if not trpl.VIEW_SCALES:
-            raise ValueError("TRPL requires at least one view scale")
-        if any(float(scale) <= 0.0 for scale in trpl.VIEW_SCALES):
-            raise ValueError("TRPL view scales must be positive")
-        if float(trpl.UNCERTAINTY_TEMPERATURE) <= 0.0:
-            raise ValueError(
-                "TRPL.UNCERTAINTY_TEMPERATURE must be positive"
-            )
-        if float(trpl.UNCERTAINTY_WEIGHT) < 0.0:
-            raise ValueError("TRPL.UNCERTAINTY_WEIGHT must be non-negative")
-        if float(trpl.MAX_UNCERTAINTY) < 0.0:
-            raise ValueError("TRPL.MAX_UNCERTAINTY must be non-negative")
-        if not 0.0 <= float(trpl.SKELETON_THRESHOLD) <= 1.0:
-            raise ValueError("TRPL.SKELETON_THRESHOLD must be in [0, 1]")
-        if not 0.0 < float(trpl.PERSISTENCE) <= 1.0:
-            raise ValueError("TRPL.PERSISTENCE must be in (0, 1]")
-        if not 0.0 < float(trpl.SUPPORT_PERSISTENCE) <= float(
-            trpl.PERSISTENCE
-        ):
-            raise ValueError(
-                "TRPL.SUPPORT_PERSISTENCE must be in (0, PERSISTENCE]"
-            )
-        if int(trpl.SKELETON_ITERATIONS) < 0:
-            raise ValueError("TRPL.SKELETON_ITERATIONS must be non-negative")
-        if int(trpl.SKELETON_MATCH_RADIUS) < 0:
-            raise ValueError("TRPL.SKELETON_MATCH_RADIUS must be non-negative")
-        if int(trpl.BOUNDARY_RADIUS) < 0:
-            raise ValueError("TRPL.BOUNDARY_RADIUS must be non-negative")
-        if int(trpl.CENTERLINE_TOLERANCE_RADIUS) < 0:
-            raise ValueError(
-                "TRPL.CENTERLINE_TOLERANCE_RADIUS must be non-negative"
-            )
-        if int(trpl.STEM_SUPPORT_RADIUS) < 0:
-            raise ValueError("TRPL.STEM_SUPPORT_RADIUS must be non-negative")
-        if not 0.0 <= float(trpl.STEM_SUPPORT_MIN_PROBABILITY) <= 1.0:
-            raise ValueError(
-                "TRPL.STEM_SUPPORT_MIN_PROBABILITY must be in [0, 1]"
-            )
-        if not 0.0 < float(
-            trpl.STEM_SUPPORT_PROBABILITY_FLOOR
-        ) <= 1.0:
-            raise ValueError(
-                "TRPL.STEM_SUPPORT_PROBABILITY_FLOOR must be in (0, 1]"
-            )
-        if not 0.0 <= float(trpl.BOUNDARY_MIN_STEM_PROBABILITY) <= 1.0:
-            raise ValueError(
-                "TRPL.BOUNDARY_MIN_STEM_PROBABILITY must be in [0, 1]"
-            )
-        if int(trpl.CORE_ERODE_ITERATIONS) < 0:
-            raise ValueError("TRPL.CORE_ERODE_ITERATIONS must be non-negative")
-        if int(trpl.CORE_STEM_RADIUS) < 0:
-            raise ValueError("TRPL.CORE_STEM_RADIUS must be non-negative")
-        if int(trpl.START_ITER) < 0:
-            raise ValueError("TRPL.START_ITER must be non-negative")
+        if float(trpl.TOPOLOGY_WEIGHT) < 0.0:
+            raise ValueError("TRPL.TOPOLOGY_WEIGHT must be non-negative")
         if int(trpl.RAMP_ITERS) < 0:
             raise ValueError("TRPL.RAMP_ITERS must be non-negative")
-        if int(trpl.MIN_CLASS_PIXELS) < 1:
-            raise ValueError("TRPL.MIN_CLASS_PIXELS must be positive")
-        if int(trpl.START_ITER) >= int(cfg.SOLVER.MAX_ITER):
-            raise ValueError("TRPL.START_ITER must be before training ends")
-        for name in (
-            "REGION_LOSS_WEIGHT",
-            "DICE_LOSS_WEIGHT",
-            "BOUNDARY_DISTILLATION_WEIGHT",
-            "TOPOLOGY_LOSS_WEIGHT",
-            "SKELETON_LOSS_WEIGHT",
-            "STEM_SUPPORT_LOSS_WEIGHT",
-            "SUPERVISED_REGION_WEIGHT",
-            "SUPERVISED_DICE_WEIGHT",
-            "SUPERVISED_TOPOLOGY_WEIGHT",
-            "LEGACY_QUERY_LOSS_WEIGHT",
-        ):
-            if float(getattr(trpl, name)) < 0.0:
-                raise ValueError("TRPL.{} must be non-negative".format(name))
     if cfg.MODEL.TOPOWHEAT.TCPM.CORE_STRATEGY not in {
         "reliable",
         "eroded",
@@ -484,6 +410,13 @@ def setup(args):
             raise ValueError("TCPM.TEMPERATURE must be positive")
         if int(tcpm.MAX_SAMPLES_PER_CLASS) < 1:
             raise ValueError("TCPM.MAX_SAMPLES_PER_CLASS must be positive")
+        for name in (
+            "SKELETON_ITERATIONS",
+            "CORE_ERODE_ITERATIONS",
+            "CORE_STEM_RADIUS",
+        ):
+            if int(getattr(tcpm, name)) < 0:
+                raise ValueError("TCPM.{} must be non-negative".format(name))
         for name in (
             "MEMORY_WARMUP_ITERS",
             "LOSS_RAMP_ITERS",

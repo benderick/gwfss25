@@ -12,7 +12,7 @@ MODEL:
       PSEUDO_RAMP_ITERS: 10000
       LEAVE_ONE_DOMAIN_OUT: True
       MIN_CORE_PIXELS: 4
-      # The entropy-derived reliability weight is not a class probability.
+      # The confidence-agreement reliability score is not a class probability.
       # Combine a moderate reliability floor with an explicit semantic gate.
       PSEUDO_MIN_WEIGHT: 0.50
       PSEUDO_MIN_CONFIDENCE: 0.80

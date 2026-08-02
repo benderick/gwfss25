@@ -1,7 +1,9 @@
-import math
-
 import torch
 import torch.nn.functional as F
+
+
+_TRPL_SKELETON_ITERATIONS = 20
+_TRPL_SPATIAL_TOLERANCE = 1
 
 
 def query_semantic_probabilities(pred_logits, pred_masks, size=None, eps=1e-6):
@@ -116,40 +118,29 @@ def build_core_mask(
                     class_mask,
                     iterations=skeleton_iterations,
                 )
+                class_core = _binary_dilate(class_core, stem_radius)
+                class_core &= class_mask
+                class_core &= reliable.unsqueeze(1)
             else:
                 class_core = stable_skeleton.unsqueeze(1).bool()
-            class_core = _binary_dilate(class_core, stem_radius)
-            class_core &= class_mask
+                class_core = _binary_dilate(class_core, stem_radius)
+                class_core &= class_mask
         else:
             class_core = _binary_erode(class_mask, erode_iterations)
-        core |= class_core.squeeze(1) & reliable
+            class_core &= reliable.unsqueeze(1)
+        core |= class_core.squeeze(1)
     return core
 
 
 @torch.no_grad()
 def build_trpl_targets(
     view_probabilities,
-    class_thresholds,
-    uncertainty_temperature=0.5,
-    uncertainty_weight=1.0,
-    max_uncertainty=0.75,
+    reliability_threshold=0.75,
     stem_class=2,
-    skeleton_threshold=0.35,
-    persistence=1.0,
-    support_persistence=0.5,
-    skeleton_iterations=20,
-    boundary_radius=2,
-    boundary_min_stem_probability=0.20,
-    skeleton_match_radius=1,
-    stem_support_radius=2,
-    stem_support_min_probability=0.15,
-    core_strategy="topology",
-    core_erode_iterations=2,
-    core_stem_radius=1,
 ):
-    """Build topology-reliable semantic targets from aligned teacher views."""
-    if not view_probabilities:
-        raise ValueError("TRPL requires at least one teacher view")
+    """Build reliable regions and stable centrelines from aligned teacher views."""
+    if len(view_probabilities) < 2:
+        raise ValueError("TRPL requires at least two aligned teacher views")
     shape = view_probabilities[0].shape
     if len(shape) != 4 or shape[1] < 2:
         raise ValueError("TRPL views must have shape [N, C, H, W] with C > 1")
@@ -157,141 +148,74 @@ def build_trpl_targets(
         raise ValueError("All TRPL views must be aligned and have identical shapes")
     if not 0 <= int(stem_class) < shape[1]:
         raise ValueError("TRPL stem class is out of range")
-    if not 0.0 < float(persistence) <= 1.0:
-        raise ValueError("TRPL persistence must be in (0, 1]")
-    if not 0.0 < float(support_persistence) <= float(persistence):
-        raise ValueError(
-            "TRPL support persistence must be in (0, persistence]"
-        )
-    if (
-        int(skeleton_match_radius) < 0
-        or int(boundary_radius) < 0
-        or int(stem_support_radius) < 0
-    ):
-        raise ValueError("TRPL morphology radii must be non-negative")
-    if not 0.0 <= float(boundary_min_stem_probability) <= 1.0:
-        raise ValueError("TRPL boundary stem probability must be in [0, 1]")
-    if not 0.0 <= float(stem_support_min_probability) <= 1.0:
-        raise ValueError("TRPL stem support probability must be in [0, 1]")
+    if not 0.0 < float(reliability_threshold) < 1.0:
+        raise ValueError("TRPL reliability threshold must be in (0, 1)")
 
     eps = 1e-6
-    probabilities = [prob.float().clamp_min(eps) for prob in view_probabilities]
+    probabilities = []
+    for probability in view_probabilities:
+        probability = probability.float().clamp_min(eps)
+        probabilities.append(
+            probability
+            / probability.sum(dim=1, keepdim=True).clamp_min(eps)
+        )
     mean_prob = torch.stack(probabilities, dim=0).mean(dim=0)
     mean_prob = mean_prob / mean_prob.sum(dim=1, keepdim=True).clamp_min(eps)
 
-    entropy = -(mean_prob * mean_prob.log()).sum(dim=1) / math.log(shape[1])
-    js_terms = []
-    for probability in probabilities:
-        midpoint = 0.5 * (probability + mean_prob)
-        js = 0.5 * (
-            (probability * (probability.log() - midpoint.log())).sum(dim=1)
-            + (mean_prob * (mean_prob.log() - midpoint.log())).sum(dim=1)
-        )
-        js_terms.append(js / math.log(2.0))
-    view_disagreement = torch.stack(js_terms, dim=0).mean(dim=0)
-    uncertainty = entropy + uncertainty_weight * view_disagreement
-    weights = torch.exp(
-        -uncertainty / max(float(uncertainty_temperature), eps)
-    ).clamp(0.0, 1.0)
-
     confidence, labels = mean_prob.max(dim=1)
-    thresholds = torch.as_tensor(
-        class_thresholds,
-        device=labels.device,
-        dtype=confidence.dtype,
-    )
-    if thresholds.numel() != shape[1]:
-        raise ValueError(
-            "Expected {} TRPL class thresholds, got {}".format(
-                shape[1], thresholds.numel()
-            )
-        )
-    reliable = (
-        confidence.ge(thresholds[labels])
-        & uncertainty.le(float(max_uncertainty))
-    )
-
-    skeletons = []
-    for probability in probabilities:
-        stem_probability = probability[:, stem_class : stem_class + 1]
-        skeletons.append(
-            soft_skeletonize(stem_probability, skeleton_iterations)
-            .ge(skeleton_threshold)
-        )
-
-    # Match skeleton evidence within a small spatial tolerance, then place the
-    # final centreline on the skeleton of the mean teacher prediction. This
-    # avoids accepting a one-view-only skeleton while remaining robust to
-    # one-pixel shifts introduced by rescaling.
-    skeleton_support = [
-        _binary_dilate(skeleton, skeleton_match_radius)
-        for skeleton in skeletons
-    ]
-    persistence_map = torch.stack(
-        [support.float() for support in skeleton_support],
+    view_disagreement = torch.stack(
+        [
+            0.5 * (probability - mean_prob).abs().sum(dim=1)
+            for probability in probabilities
+        ],
         dim=0,
     ).mean(dim=0)
-    mean_stem_skeleton = hard_skeletonize(
-        mean_prob[:, stem_class : stem_class + 1],
-        iterations=skeleton_iterations,
-        threshold=skeleton_threshold,
-    )
-    stable_skeleton = (
-        mean_stem_skeleton & persistence_map.ge(float(persistence))
-    ).squeeze(1)
-    support_skeleton = (
-        mean_stem_skeleton
-        & persistence_map.ge(float(support_persistence))
-    ).squeeze(1)
+    reliability = (
+        confidence * (1.0 - view_disagreement)
+    ).clamp(0.0, 1.0)
+    reliable = reliability.ge(float(reliability_threshold))
 
-    stem_support = _binary_dilate(
-        support_skeleton.unsqueeze(1),
-        stem_support_radius,
-    ).squeeze(1)
-    stem_support &= mean_prob[:, stem_class].ge(
-        float(stem_support_min_probability)
+    view_skeletons = [
+        hard_skeletonize(
+            probability.argmax(dim=1).eq(stem_class).unsqueeze(1),
+            iterations=_TRPL_SKELETON_ITERATIONS,
+        )
+        for probability in probabilities
+    ]
+    matched_skeletons = [
+        _binary_dilate(skeleton, _TRPL_SPATIAL_TOLERANCE)
+        for skeleton in view_skeletons
+    ]
+    strict_consensus = torch.stack(matched_skeletons, dim=0).all(dim=0)
+    mean_skeleton = hard_skeletonize(
+        labels.eq(stem_class).unsqueeze(1),
+        iterations=_TRPL_SKELETON_ITERATIONS,
     )
+    stable_skeleton = (mean_skeleton & strict_consensus).squeeze(1)
 
     reliable_stem = reliable & labels.eq(stem_class)
-    structural_stem = reliable_stem | support_skeleton
+    structural_stem = reliable_stem | stable_skeleton
     stem_neighbourhood = _binary_dilate(
         structural_stem.unsqueeze(1),
-        boundary_radius,
+        _TRPL_SPATIAL_TOLERANCE,
     ).squeeze(1)
     uncertain_boundary = (
-        stem_neighbourhood
-        & ~structural_stem
-        & mean_prob[:, stem_class].ge(
-            float(boundary_min_stem_probability)
-        )
-    )
-    reliable &= ~uncertain_boundary
-
-    core_mask = build_core_mask(
-        labels,
-        reliable,
-        num_classes=shape[1],
-        stem_class=stem_class,
-        stable_skeleton=stable_skeleton,
-        strategy=core_strategy,
-        erode_iterations=core_erode_iterations,
-        stem_radius=core_stem_radius,
-        skeleton_iterations=skeleton_iterations,
+        labels.eq(stem_class)
+        & stem_neighbourhood
+        & ~reliable
+        & ~stable_skeleton
     )
 
     return {
         "labels": labels,
         "probabilities": mean_prob,
-        "weights": weights,
+        "weights": reliability,
         "reliable": reliable,
-        "uncertainty": uncertainty,
+        "reliability": reliability,
         "confidence": confidence,
+        "view_disagreement": view_disagreement,
         "stable_skeleton": stable_skeleton,
-        "support_skeleton": support_skeleton,
-        "stem_support": stem_support,
-        "skeleton_persistence": persistence_map.squeeze(1),
         "uncertain_boundary": uncertain_boundary,
-        "core_mask": core_mask,
     }
 
 
@@ -335,151 +259,68 @@ def masked_nll_loss(
     return (per_pixel * pixel_weights).sum() / valid.float().sum().clamp_min(1.0)
 
 
-def masked_soft_cross_entropy(
-    probabilities,
+def class_balanced_consistency_loss(
+    student_probabilities,
     target_probabilities,
+    labels,
     weights,
     valid,
     eps=1e-6,
 ):
-    """Distill uncertain pixels without converting them to hard negatives."""
-    if probabilities.shape != target_probabilities.shape:
-        raise ValueError("Soft TRPL targets must match student probabilities")
-    per_pixel = -(
-        target_probabilities.float()
-        * probabilities.float().clamp_min(eps).log()
-    ).sum(dim=1)
-    pixel_weights = weights.float() * valid.float()
-    return (
-        (per_pixel * pixel_weights).sum()
-        / valid.float().sum().clamp_min(1.0)
-    )
+    """Class-average teacher-student KL over accepted pseudo regions."""
+    if student_probabilities.shape != target_probabilities.shape:
+        raise ValueError("TRPL teacher and student probabilities must match")
+    if labels.shape != valid.shape or labels.shape != weights.shape:
+        raise ValueError("TRPL labels, weights and valid mask must match")
 
+    student = student_probabilities.float().clamp_min(eps)
+    teacher = target_probabilities.float().clamp_min(eps)
+    teacher = teacher / teacher.sum(dim=1, keepdim=True).clamp_min(eps)
+    per_pixel = (
+        teacher * (teacher.log() - student.log())
+    ).sum(dim=1).clamp_min(0.0)
 
-def positive_probability_floor_loss(
-    prediction,
-    support,
-    probability_floor=0.55,
-    weights=None,
-):
-    """Prevent a supported thin structure from shrinking below a safe floor."""
-    if prediction.ndim != 4 or prediction.shape[1] != 1:
-        raise ValueError("prediction must have shape [N, 1, H, W]")
-    if support.ndim == 3:
-        support = support.unsqueeze(1)
-    if support.shape != prediction.shape:
-        raise ValueError("support must match prediction spatial dimensions")
-    floor = float(probability_floor)
-    if not 0.0 < floor <= 1.0:
-        raise ValueError("probability_floor must be in (0, 1]")
-    support = support.float()
-    if weights is None:
-        weights = torch.ones_like(prediction)
-    elif weights.ndim == 3:
-        weights = weights.unsqueeze(1)
-    if weights.shape != prediction.shape:
-        raise ValueError("weights must match prediction spatial dimensions")
-    violation = F.relu(floor - prediction.float().clamp(0.0, 1.0)) / floor
-    pixel_weights = support * weights.float()
-    return (
-        (violation.square() * pixel_weights).sum()
-        / support.sum().clamp_min(1.0)
-    )
-
-
-def masked_dice_loss(
-    probabilities,
-    labels,
-    weights,
-    valid,
-    num_classes,
-    eps=1.0,
-):
-    one_hot = F.one_hot(
-        labels.clamp(0, num_classes - 1),
-        num_classes=num_classes,
-    ).permute(0, 3, 1, 2).to(probabilities)
-    pixel_weights = (weights * valid.float()).unsqueeze(1)
-    intersection = (probabilities * one_hot * pixel_weights).sum(dim=(0, 2, 3))
-    denominator = (
-        (probabilities + one_hot) * pixel_weights
+    num_classes = student.shape[1]
+    class_ids = torch.arange(
+        num_classes,
+        device=labels.device,
+    ).view(1, -1, 1, 1)
+    class_valid = labels.unsqueeze(1).eq(class_ids) & valid.unsqueeze(1).bool()
+    counts = class_valid.sum(dim=(0, 2, 3)).float()
+    weighted_losses = (
+        per_pixel.unsqueeze(1)
+        * weights.float().unsqueeze(1)
+        * class_valid.float()
     ).sum(dim=(0, 2, 3))
-    present = (one_hot * pixel_weights).sum(dim=(0, 2, 3)).gt(0)
-    dice = (2.0 * intersection + eps) / (denominator + eps)
-    target_mass = (one_hot * valid.float().unsqueeze(1)).sum(dim=(0, 2, 3))
-    target_confidence = (
-        (one_hot * pixel_weights).sum(dim=(0, 2, 3))
-        / target_mass.clamp_min(1.0)
-    )
+    present = counts.gt(0)
     if present.any():
-        return (
-            (1.0 - dice[present]) * target_confidence[present]
-        ).mean()
-    return probabilities.sum() * 0.0
+        return (weighted_losses[present] / counts[present]).mean()
+    return student_probabilities.sum() * 0.0
 
 
-def soft_cldice_loss(
+def stable_centerline_loss(
     prediction,
     target,
-    valid=None,
-    iterations=20,
-    eps=1.0,
-    skip_empty_target=False,
+    eps=1e-6,
 ):
-    prediction = prediction.float().clamp(0.0, 1.0)
-    target = target.float().clamp(0.0, 1.0)
-    if valid is not None:
-        valid = valid.float()
-        prediction = prediction * valid
-        target = target * valid
-
-    prediction_skeleton = soft_skeletonize(prediction, iterations)
-    target_skeleton = soft_skeletonize(target, iterations)
-    topology_precision = (
-        (prediction_skeleton * target).sum(dim=(1, 2, 3)) + eps
-    ) / (prediction_skeleton.sum(dim=(1, 2, 3)) + eps)
-    topology_sensitivity = (
-        (target_skeleton * prediction).sum(dim=(1, 2, 3)) + eps
-    ) / (target_skeleton.sum(dim=(1, 2, 3)) + eps)
-    cldice = (
-        2.0
-        * topology_precision
-        * topology_sensitivity
-        / (topology_precision + topology_sensitivity).clamp_min(1e-6)
-    )
-    losses = 1.0 - cldice
-    if skip_empty_target:
-        present = target.sum(dim=(1, 2, 3)).gt(0)
-        if present.any():
-            return losses[present].mean()
-        return prediction.sum() * 0.0
-    return losses.mean()
-
-
-def centerline_recall_loss(
-    prediction,
-    target,
-    tolerance_radius=1,
-    eps=1.0,
-):
-    """Encourage observed centreline evidence without penalizing unknown branches."""
+    """Maximize stem probability around stable multi-view centreline evidence."""
     if prediction.ndim != 4 or target.ndim != 4:
         raise ValueError("prediction and target must have shape [N, 1, H, W]")
+    if prediction.shape != target.shape:
+        raise ValueError("prediction and target must have identical shapes")
     prediction = prediction.float().clamp(0.0, 1.0)
     target = target.float().clamp(0.0, 1.0)
-    radius = max(int(tolerance_radius), 0)
-    if radius:
-        prediction = F.max_pool2d(
-            prediction,
-            kernel_size=2 * radius + 1,
-            stride=1,
-            padding=radius,
-        )
-
+    prediction = F.max_pool2d(
+        prediction,
+        kernel_size=2 * _TRPL_SPATIAL_TOLERANCE + 1,
+        stride=1,
+        padding=_TRPL_SPATIAL_TOLERANCE,
+    )
     target_mass = target.sum(dim=(1, 2, 3))
-    overlap = (prediction * target).sum(dim=(1, 2, 3))
-    losses = 1.0 - (overlap + eps) / (target_mass + eps)
-    present = target_mass.gt(0)
-    if present.any():
+    losses = -(
+        prediction.clamp_min(eps).log() * target
+    ).sum(dim=(1, 2, 3)) / target_mass.clamp_min(1.0)
+    present = target_mass.gt(0.0)
+    if bool(present.any()):
         return losses[present].mean()
     return prediction.sum() * 0.0

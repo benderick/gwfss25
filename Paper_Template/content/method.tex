@@ -25,7 +25,7 @@
 \begin{figure}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/framework.pdf}
-\caption{\METHOD 的三阶段流程与关键算子。上排依次给出监督预热、连续 EMA 教师--学生联合训练和冻结教师推理。下排展开三个创新点：\TRPL 以多视图不确定性 $U$ 和中心线持续性 $A$ 解耦可靠区域 $R^+$、稳定中心线 $K^+$ 与忽略边界 $B^{?}$；\TCPM 从器官核心 $\Omega_{i,c}$ 分别更新有标注与伪标注类别--域记忆，按样本排除自身采集域后形成类别锚点 $\bar q_c^{(-d_i)}$，再校正可靠区域中偏离该锚点的困难查询；\BAZR 将熵、异常端点、尺度分歧和茎秆先验组合为窗口风险 $r_k$，经 Top-$K$/NMS、局部前向和门控融合得到最终预测。RGB、标注、窗口与裁剪均来自严格对齐的真实样本；底排的概率、可靠性及风险热图依据同一标注几何确定性构造，仅解释空间对齐与运算关系，不表示实验预测。}
+\caption{\METHOD 的三阶段流程与关键算子。上排依次给出监督预热、连续 EMA 教师--学生联合训练和冻结教师推理。下排展开三个创新点：\TRPL 以语义置信度 $Q$ 和双视图分歧 $D$ 形成可靠性 $r$，并用严格骨架共识解耦可靠区域 $R^+$、稳定中心线 $K^+$ 与忽略边界 $B^{?}$；\TCPM 从器官核心 $\Omega_{i,c}$ 分别更新有标注与伪标注类别--域记忆，按样本排除自身采集域后形成类别锚点 $\bar q_c^{(-d_i)}$，再校正可靠区域中偏离该锚点的困难查询；\BAZR 将熵、异常端点、尺度分歧和茎秆先验组合为窗口风险 $r_k$，经 Top-$K$/NMS、局部前向和门控融合得到最终预测。RGB、标注、窗口与裁剪均来自严格对齐的真实样本；底排的概率、可靠性及风险热图依据同一标注几何确定性构造，仅解释空间对齐与运算关系，不表示实验预测。}
 \label{fig:framework}
 \end{figure}
 
@@ -36,72 +36,69 @@
 
 \TRPL 借鉴弱到强一致性学习利用教师预测监督强扰动视图的基本形式 \citep{yang2023unimatch}，也保留了 U2PL 和 ST++ 所强调的伪标签可靠性控制 \citep{wang2022u2pl,yang2022stpp}。这些方法把可靠性定义在像素、区域或整幅图像层面，置信度不足的茎秆像素通常被统一丢弃。对小麦图像而言，低置信度并不总意味着器官位置错误：由混合像素和下采样引起的不确定性往往集中在茎秆两侧，而中心位置在不同视图中仍然稳定。soft-clDice 提供了可微的中心线一致性约束 \citep{shit2021cldice}，但它假设监督掩码本身具有可信拓扑，直接用于噪声伪标签可能把偶然误连固化下来。\TRPL 的改动在于先通过多视图一致性确定可见中心线是否可信，再分别处理中心线、区域和边界，而不是对整张伪掩码使用同一阈值或同一拓扑约束。
 
-\subsubsection{多视图不确定性估计}
+\subsubsection{双视图可靠性估计}
 
-固定类别阈值不能准确描述细长器官的可靠性。为得到同时包含概率不确定性和结构稳定性的评价，本文对无标注图像 $x^u$ 构造 $M$ 个弱视图。第 $m$ 个视图包含尺度变换和保持几何可逆的弱扰动，其对齐到原图坐标的教师预测为
+多组类别阈值与不确定性温度会使伪标签机制难以归因。本文只对无标注图像 $x^u$ 构造原尺度和缩放尺度两个弱视图。第 $m$ 个视图经尺度变换后，其对齐到原图坐标的教师预测为
 \begin{equation}
 P_m=\mathcal T_m^{-1}
 \left(f_{\theta_t}(\mathcal T_m(x^u))\right).
 \end{equation}
-多视图平均预测 $\bar P=M^{-1}\sum_{m=1}^{M}P_m$ 用于生成类别伪标签。像素 $p$ 的不确定性定义为
+平均预测 $\bar P=M^{-1}\sum_{m=1}^{M}P_m$ 用于生成类别伪标签 $\hat y(p)=\arg\max_c\bar P_c(p)$。视图分歧采用无需额外温度或权重的总变差距离：
 \begin{equation}
-U(p)=
-\frac{H(\bar P(p))}{\log C}
-+\frac{\beta}{M}\sum_{m=1}^{M}
-\operatorname{JS}\!\left(P_m(p)\,\|\,\bar P(p)\right),
+D(p)=\frac{1}{2M}\sum_{m=1}^{M}
+\left\|P_m(p)-\bar P(p)\right\|_1.
 \label{eq:uncertainty}
 \end{equation}
-其中 $H(\cdot)$ 为熵，$\operatorname{JS}(\cdot)$ 为 Jensen--Shannon 散度，$\beta$ 控制尺度与扰动不一致性的贡献。由此得到连续置信权重
+将平均预测的最大类别概率记为 $Q(p)=\max_c\bar P_c(p)$，连续可靠性定义为
 \begin{equation}
-w(p)=\exp\left(-U(p)/\tau_u\right).
+r(p)=Q(p)\left(1-D(p)\right).
 \label{eq:confidence}
 \end{equation}
+$Q$ 衡量语义置信度，$1-D$ 衡量尺度一致性，二者乘积仍位于 $[0,1]$。可靠区域只由一个全局阈值确定，即 $R^+=\{p\mid r(p)\geq\tau_r\}$。
 
 \subsubsection{中心线--区域解耦}
 
-对于背景、麦穗和叶片，本文根据类别自适应阈值 $\tau_c$ 从 $\bar P$ 中提取可靠区域。对于茎秆，直接使用相同操作容易在边界不确定时删除整个细小组件。为此，本文对每个视图的茎秆概率执行可微骨架化：
+仅使用 $R^+$ 仍容易在边界不确定时删除整个细小茎秆组件。为此，本文先对每个视图的硬茎秆预测执行骨架化：
 \begin{equation}
-K_m=\mathcal S(P_m^{\mathrm{stem}}),
+K_m=\mathcal S\!\left(\mathbb I[\arg\max_cP_{m,c}=c_{\mathrm{stem}}]\right),
 \end{equation}
-并计算中心线持续性
+再把中心线放回平均预测的茎秆骨架，并要求其在两个视图的一像素邻域内同时出现：
 \begin{equation}
-A(p)=\frac{1}{M}\sum_{m=1}^{M}
-\mathbb I[K_m(p)>\tau_k].
+K^+=\mathcal S\!\left(\mathbb I[\hat y=c_{\mathrm{stem}}]\right)
+\cap\bigcap_{m=1}^{M}\operatorname{Dilate}_1(K_m).
 \end{equation}
-稳定中心线定义为 $K^+(p)=\mathbb I[A(p)\geq\rho]$。可靠茎秆区域 $R^+$ 由类别预测为茎秆且 $w(p)\geq\tau_{\mathrm{stem}}$ 的像素组成；在 $U$--$A$ 平面中，该条件等价于 $U(p)\leq u_{\mathrm{stem}}=-\tau_u\log\tau_{\mathrm{stem}}$。预测为茎秆但未进入 $R^+$、且位于其邻域内的像素构成不确定边界 $B^{?}$。$B^{?}$ 不作为硬类别监督，而被写入忽略掩码。该表示保留了边界宽度不确定但中心位置稳定的茎秆监督。
+预测为茎秆但未进入 $R^+$、且邻近可靠茎秆或 $K^+$ 的像素构成不确定边界 $B^{?}$。所有不可靠像素均不进入语义一致性损失，而 $K^+$ 可以绕过区域阈值单独提供正拓扑证据。该表示保留了边界宽度不确定但中心位置稳定的茎秆监督。
 
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\linewidth]{figures/topology_pseudo_label.pdf}
-\caption{\TRPL 的双证据解耦机制。（a）同一幅未标注图像经弱扰动和 EMA 教师预测后反变换至公共坐标，形成对齐概率栈 $\{P_m\}$；叠加轮廓揭示了不同视图对茎秆边界宽度的分歧及其共享的轴向结构。（b）分布支路由平均概率、预测熵和视图间 Jensen--Shannon 散度计算不确定性 $U(p)$，结构支路则聚合逐视图骨架得到持续性 $A(p)$。候选茎秆像素在 $U$--$A$ 平面中的等密度线与两个阈值共同呈现四种证据组合，其中低不确定性支持可靠区域，高持续性支持稳定中心线。（c）联合门控在同一空间坐标中分解出加权区域 $wR^+$、稳定中心线 $K^+$ 和忽略边界 $B^{?}$，三者分别连接区域损失、拓扑损失和无梯度路径。RGB 来自真实样本；概率场依据其标注几何构造为机制示意，不参与定量结论。}
+\caption{\TRPL 的双证据解耦机制。（a）同一幅未标注图像经两个尺度的弱视图和 EMA 教师预测后反变换至公共坐标，形成对齐概率栈 $\{P_m\}$；叠加轮廓揭示了不同视图对茎秆边界宽度的分歧及其共享的轴向结构。（b）分布支路由平均置信度和总变差分歧计算可靠性 $r(p)$，结构支路对齐两个视图的硬预测骨架。单一阈值产生可靠区域，严格骨架交集产生稳定中心线。（c）联合门控在同一空间坐标中分解出加权区域 $rR^+$、稳定中心线 $K^+$ 和忽略边界 $B^{?}$，三者分别连接语义一致性、拓扑一致性和无梯度路径。RGB 来自真实样本；概率场依据其标注几何构造为机制示意，不参与定量结论。}
 \label{fig:trpl}
 \end{figure}
 
-概率不确定性与结构持续性的分工在\cref{fig:trpl}中得到直观呈现。学生的区域伪监督损失为
+概率可靠性与结构稳定性的分工在\cref{fig:trpl}中得到直观呈现。记 $\Omega_c=\{p\in R^+\mid\hat y(p)=c\}$，$\mathcal C^+$ 为当前批次中 $\Omega_c$ 非空的类别集合。学生的语义一致性损失采用按类别平均的软 KL：
 \begin{equation}
-\mathcal L_{\mathrm{region}}=
-\frac{1}{|\Omega_r|}
-\sum_{p\in\Omega_r}w(p)
-\ell_{\mathrm{ce}}\!\left(P_s(p),\hat y(p)\right)
-+\lambda_d\mathcal L_{\mathrm{dice}},
+\mathcal L_{\mathrm{semantic}}=
+\frac{1}{|\mathcal C^+|}\sum_{c\in\mathcal C^+}
+\frac{1}{|\Omega_c|}\sum_{p\in\Omega_c}r(p)
+\operatorname{KL}\!\left(\bar P(p)\,\|\,P_s(p)\right),
 \label{eq:regionloss}
 \end{equation}
-其中 $\Omega_r$ 排除了 $B^{?}$，$P_s$ 为学生预测。拓扑监督仅作用于多视图一致的可见结构：
+其中 $P_s$ 为学生强扰动视图的预测。按类别平均避免背景像素数量支配梯度，软目标则保留教师的类别间不确定性。拓扑监督仅作用于双视图一致的可见中心线：
 \begin{equation}
 \mathcal L_{\mathrm{topology}}
-=1-\operatorname{clDice}
-\left(\mathcal S(P_s^{\mathrm{stem}}),K^+\right)
-+\lambda_c\mathcal L_{\mathrm{skel-cons}},
+=-\frac{1}{|K^+|}\sum_{p\in K^+}
+\log\max_{q\in\mathcal N_1(p)}P_s^{\mathrm{stem}}(q),
 \label{eq:topoloss}
 \end{equation}
-其中 $\mathcal L_{\mathrm{skel-cons}}$ 约束学生强扰动视图与教师弱扰动视图的骨架一致性。该设计不对两个可见端点之间执行形态学连线，因此不会将被叶片遮挡的区域强制标为茎秆。
+其中一像素邻域 $\mathcal N_1$ 容忍缩放与反变换造成的离散偏移。最终 $\mathcal L_{\mathrm{TRPL}}=\mathcal L_{\mathrm{semantic}}+\lambda_t\mathcal L_{\mathrm{topology}}$。该设计不对两个可见端点之间执行形态学连线，也不在有标注分支额外叠加损失，因此不会把偶然误连固化或改变监督基线目标。
 
 \subsection{拓扑核心原型记忆}
 \label{sec:tcpm}
 
 类别原型为跨域分割提供了紧凑的语义参照。ProDA 根据像素到类别原型的距离修正伪标签并压紧目标域特征 \citep{zhang2021proda}，Pin the Memory 则通过类别记忆和模拟元测试学习未知域中的共享概念 \citep{kim2022pinmemory}。两者启发了本文的原型约束和留一域训练，但直接从完整高置信区域求均值仍不适合小麦器官：叶片边缘、茎秆边缘和二者交叠位置恰好是域风格与分类噪声最强的区域，少量错误像素就可能显著移动像素占比很低的茎秆原型。反过来，若干净核心既用于建库又作为唯一查询，分割头中已经分离的类别质心很容易满足原型分类，损失会退化为近零的自一致性，真正发生域偏移的器官边缘和遮挡邻域反而得不到校正。\TCPM 因而采用非对称证据流：拓扑核心只负责建立稳定锚点，可靠区域中偏离跨域锚点最明显的特征负责接收梯度。
 
-具体地，本文从像素解码器的高分辨率掩码特征中提取归一化表示 $z(p)$，并为样本 $i$ 的类别 $c$ 定义核心像素集合 $\Omega_{i,c}$。茎秆核心由稳定中心线 $K^+$ 及其窄邻域组成；其余类别使用边界收缩后的高置信内部区域。大面积器官可以舍弃少量边界来换取纯净内部特征，茎秆却必须保住窄结构的轴向证据，因此这里不对四个类别使用相同的形态操作。核心在特征分辨率下少于 $n_{\min}$ 个像素时不更新记忆；其余核心先被压缩为带权样本质心
+具体地，本文从像素解码器的高分辨率掩码特征中提取归一化表示 $z(p)$，并为样本 $i$ 的类别 $c$ 定义核心像素集合 $\Omega_{i,c}$。茎秆核心由稳定中心线 $K^+$ 及其窄邻域组成；其余类别使用边界收缩后的高置信内部区域。大面积器官可以舍弃少量边界来换取纯净内部特征，茎秆却必须保住窄结构的轴向证据，因此这里不对四个类别使用相同的形态操作。记证据权重 $w(p)$ 在有标注分支取 1、在伪标注分支取 \TRPL 可靠性 $r(p)$。核心在特征分辨率下少于 $n_{\min}$ 个像素时不更新记忆；其余核心先被压缩为带权样本质心
 \begin{equation}
 \widetilde q_{i,c}=\mathcal N\!\left(
 \frac{\sum_{p\in\Omega_{i,c}}w(p)z(p)}
@@ -222,7 +219,7 @@ g_k(p)P_k^z(p)
 
 \subsection{训练目标与优化过程}
 
-有标注数据使用 Mask2Former 的类别、掩码交叉熵和 Dice 损失，记为 $\mathcal L_{\mathrm{sup}}$。此外，对有标注茎秆应用同样的拓扑损失，以保证监督与半监督分支的目标一致。原型学习损失为
+有标注数据仅使用 Mask2Former 原有的类别、掩码交叉熵和 Dice 损失，记为 $\mathcal L_{\mathrm{sup}}$；这保证监督分支与统一主干基线完全一致。原型学习损失为
 \begin{equation}
 \mathcal L_{\mathrm{prototype}}
 =\mathcal L_{\mathrm{con}}
@@ -233,8 +230,7 @@ g_k(p)P_k^z(p)
 \begin{equation}
 \mathcal L=
 \mathcal L_{\mathrm{sup}}
-+\lambda_u\mathcal L_{\mathrm{region}}
-+\lambda_t\mathcal L_{\mathrm{topology}}
++\lambda_u\mathcal L_{\mathrm{TRPL}}
 +\lambda_p\mathcal L_{\mathrm{prototype}}
 +\lambda_r\mathcal L_{\mathrm{route}}.
 \label{eq:total}
