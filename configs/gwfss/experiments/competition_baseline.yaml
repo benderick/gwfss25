@@ -9,7 +9,7 @@ DATASETS:
   TEST: ("gwfss_sem_seg_val",)
 
 SOLVER:
-  IMS_PER_BATCH: 2
+  IMS_PER_BATCH: 4
   MAX_ITER: 20000
   CHECKPOINT_PERIOD: 1000
 
