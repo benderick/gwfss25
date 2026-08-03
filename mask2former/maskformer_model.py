@@ -29,6 +29,7 @@ import detectron2.utils.comm as comm
 
 from .modeling.criterion import SetCriterion
 from .modeling.matcher import HungarianMatcher
+from .care import interpolate_feature_statistics
 from .thresh_control import ThreshController
 from .topowheat import (
     BAZRFusionGate,
@@ -150,6 +151,10 @@ class MaskFormer(nn.Module):
         self.trpl_cfg = topowheat.TRPL
         self.tcpm_cfg = topowheat.TCPM
         self.bazr_cfg = topowheat.BAZR
+
+        care = self.cfg.MODEL.CARE
+        self.care_enabled = bool(care.ENABLED)
+        self.care_feature_name = str(care.FEATURE_NAME)
 
         if self.tcpm_enabled:
             self.prototype_memory = TopologyCorePrototypeMemory(
@@ -972,6 +977,95 @@ class MaskFormer(nn.Module):
         if C == 3:
             Image.fromarray(img, 'RGB').save(fname)  
 
+    def _apply_care(self, features, batched_inputs):
+        if not self.care_enabled or not self.training:
+            return features
+        if self.care_feature_name not in features:
+            raise KeyError(
+                "CARE feature '{}' is unavailable; backbone returned {}".format(
+                    self.care_feature_name,
+                    sorted(features),
+                )
+            )
+
+        feature = features[self.care_feature_name]
+        channels = feature.shape[1]
+        donor_means = []
+        donor_stds = []
+        weights = []
+        for sample in batched_inputs:
+            weight = sample.get("care_weight")
+            if weight is None:
+                donor_means.append(torch.zeros(channels, dtype=torch.float32))
+                donor_stds.append(torch.ones(channels, dtype=torch.float32))
+                weights.append(torch.tensor(0.0, dtype=torch.float32))
+                continue
+
+            donor_mean = sample["care_donor_mean"]
+            donor_std = sample["care_donor_std"]
+            if donor_mean.numel() != channels or donor_std.numel() != channels:
+                raise ValueError(
+                    "CARE bank has {} channels but {} has {}".format(
+                        donor_mean.numel(),
+                        self.care_feature_name,
+                        channels,
+                    )
+                )
+            donor_means.append(donor_mean)
+            donor_stds.append(donor_std)
+            weights.append(weight)
+
+        donor_mean = torch.stack(donor_means).to(feature.device)
+        donor_std = torch.stack(donor_stds).to(feature.device)
+        compatibility_weight = torch.stack(weights).to(feature.device)
+
+        updated = dict(features)
+        mixed_feature, runtime_statistics = interpolate_feature_statistics(
+            feature,
+            donor_mean,
+            donor_std,
+            compatibility_weight,
+            return_statistics=True,
+        )
+        updated[self.care_feature_name] = mixed_feature
+
+        with torch.no_grad():
+            active = compatibility_weight.gt(0)
+            active_count = active.sum().clamp_min(1)
+            storage = get_event_storage()
+            storage.put_scalar(
+                "care/applied_fraction",
+                active.float().mean().item(),
+            )
+            storage.put_scalar(
+                "care/mean_compatibility_weight",
+                (
+                    compatibility_weight[active].sum() / active_count
+                    if active.any()
+                    else compatibility_weight.new_zeros(())
+                ).item(),
+            )
+            if active.any() and self.iter % 50 == 0:
+                mean_shift = runtime_statistics["normalized_mean_shift"][active]
+                std_ratio = runtime_statistics["target_to_source_std_ratio"][active]
+                storage.put_scalar(
+                    "care/runtime_mean_shift_median",
+                    mean_shift.quantile(0.50).item(),
+                )
+                storage.put_scalar(
+                    "care/runtime_mean_shift_q95",
+                    mean_shift.quantile(0.95).item(),
+                )
+                storage.put_scalar(
+                    "care/runtime_std_ratio_q01",
+                    std_ratio.quantile(0.01).item(),
+                )
+                storage.put_scalar(
+                    "care/runtime_std_ratio_q99",
+                    std_ratio.quantile(0.99).item(),
+                )
+        return updated
+
     def forward(self, batched_inputs, branch='supervised', return_preds=False):
         """
         Args:
@@ -1009,6 +1103,7 @@ class MaskFormer(nn.Module):
             images = ImageList.from_tensors(images, self.size_divisibility)
 
             features = self.backbone(images.tensor)
+            features = self._apply_care(features, batched_inputs)
             need_topowheat_features = (
                 (
                     self.tcpm_enabled

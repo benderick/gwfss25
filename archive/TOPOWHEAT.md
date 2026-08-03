@@ -1,5 +1,14 @@
 # TopoWheat implementation
 
+> **Status: rejected experimental implementation.** Full-validation audits show
+> that TRPL does not outperform confidence-matched selection, its topology signal
+> does not outperform a matched confidence skeleton, and the 30k run degrades
+> sharply. TCPM and BAZR depend on unsupported mechanisms. Keep this code only to
+> reproduce diagnosed experiments; do not present it as the paper's validated
+> method or start new long runs from it. See
+> [`METHOD_REDESIGN.md`](METHOD_REDESIGN.md) and
+> [`TRPL_AUDIT.md`](TRPL_AUDIT.md).
+
 All extensions are registered under `MODEL.TOPOWHEAT` and are disabled by
 default. The released supervised and guided-distillation configurations
 therefore keep their original model structure and loss path.

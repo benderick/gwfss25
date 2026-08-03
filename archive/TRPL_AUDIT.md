@@ -87,3 +87,47 @@ relative to an ordinary accepted-pixel average. A large stem value means that
 each accepted stem error receives much more gradient than a typical accepted
 pixel. The current centreline loss is positive-only: it raises stem probability
 near a stable skeleton but does not penalize false stem regions elsewhere.
+
+## Full-validation decision
+
+The mechanism audit was completed on all 99 validation images using the exact
+Stage I warm start, the selected 5k TRPL checkpoint, and the final 30k teacher.
+All checkpoints loaded 100 percent of the model state.
+
+| Teacher checkpoint | Mean-view mIoU | Stem prediction pixels | Stem precision | Stem recall | Stem IoU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stage I, iteration 21999 | 0.728239 | 713,994 | 0.651524 | 0.551178 | 0.425684 |
+| TRPL, iteration 4999 | 0.729473 | 697,080 | 0.661248 | 0.546153 | 0.426752 |
+| TRPL, iteration 29999 | 0.706477 | 1,164,445 | 0.451876 | 0.623456 | 0.354993 |
+
+Both proposed TRPL signals failed their matched controls before model quality
+degraded:
+
+| Mechanism result | Stage I | TRPL 5k | TRPL 30k |
+| --- | ---: | ---: | ---: |
+| Reliable-stem precision gain over class-matched confidence | -0.001967 | -0.001980 | -0.004418 |
+| Stable-skeleton precision gain over matched confidence | -0.011399 | -0.011222 | -0.031381 |
+| Stable-skeleton clDice gain over matched confidence | 0.001152 | 0.000051 | -0.013345 |
+| Stem per-pixel class-balance multiplier | 16.222606 | 16.959244 | 10.781588 |
+
+From 5k to 30k, predicted stem area grew by 67.0 percent. True-positive stem
+pixels grew by only 14.2 percent, while false-positive stem pixels grew from
+236,137 to 638,260. False stem components grew from 354 to 1,278. The apparent
+recall gain is therefore caused by severe stem expansion, not improved thin
+structure recovery.
+
+The current TRPL mechanism is rejected, not merely in need of another threshold
+search. In particular:
+
+- `confidence * (1 - disagreement)` does not rank pseudo labels better than
+  confidence alone;
+- strict multi-view skeleton consensus does not add useful evidence beyond a
+  same-size confidence-selected skeleton;
+- equal averaging over pseudo classes strongly amplifies erroneous stem pixels;
+- the positive-only centreline objective reinforces false stable components and
+  has no term that suppresses stem predictions elsewhere.
+
+Do not use the current TRPL targets as the foundation for TCPM, and do not run
+additional long TRPL hyperparameter sweeps. This result rejects this particular
+pseudo-topology construction; it does not reject topology supervision from
+ground-truth labels or a future signed, controlled topology objective.

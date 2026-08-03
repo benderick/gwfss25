@@ -1,0 +1,24 @@
+_BASE_: competition_baseline.yaml
+
+MODEL:
+  WEIGHTS: "outputs/competition_baseline/model_best.pth"
+  CARE:
+    ENABLED: False
+
+SSL:
+  TRAIN_SSL: False
+  EVAL_WHO: "TEACHER"
+
+SOLVER:
+  # A conservative restart from the selected Stage-I checkpoint. C0 and C1
+  # share every optimization setting so continued training is controlled.
+  BASE_LR: 0.00001
+  MAX_ITER: 2500
+  CHECKPOINT_PERIOD: 1000
+
+TEST:
+  EVAL_PERIOD: 1000
+  AUG:
+    ENABLED: False
+
+SEED: 2025

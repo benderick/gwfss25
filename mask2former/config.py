@@ -110,6 +110,13 @@ def add_maskformer2_config(cfg):
     cfg.MODEL.SEM_SEG_HEAD.DEFORMABLE_TRANSFORMER_ENCODER_N_POINTS = 4
     cfg.MODEL.SEM_SEG_HEAD.DEFORMABLE_TRANSFORMER_ENCODER_N_HEADS = 8
 
+    # CARE-Wheat is disabled by default and adds no inference-time module.
+    # Its bank is prepared from a frozen Stage-I checkpoint after Phase 0.
+    cfg.MODEL.CARE = CN()
+    cfg.MODEL.CARE.ENABLED = False
+    cfg.MODEL.CARE.BANK_DIR = ""
+    cfg.MODEL.CARE.FEATURE_NAME = "res2"
+
     # point loss configs
     # Number of points sampled during training for a mask point head.
     cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS = 112 * 112

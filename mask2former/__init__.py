@@ -22,6 +22,9 @@ from .data.dataset_mappers.mask_former_panoptic_dataset_mapper import (
 from .data.dataset_mappers.mask_former_semantic_dataset_mapper import (
     MaskFormerSemanticDatasetMapper,
 )
+from .data.dataset_mappers.care_semantic_dataset_mapper import (
+    CARESemanticDatasetMapper,
+)
 from .data.dataset_mappers.coco_image_dataset_mapper import ImageDatasetMapper
 from .data.dataset_mappers.mask_former_image_dataset_mapper import MaskFormerImageDatasetMapper
 

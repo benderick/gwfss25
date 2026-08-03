@@ -58,6 +58,7 @@ from detectron2.engine import hooks
 
 # MaskFormer
 from mask2former import (
+    CARESemanticDatasetMapper,
     COCOInstanceNewBaselineDatasetMapper,
     COCOPanopticNewBaselineDatasetMapper,
     InstanceSegEvaluator,
@@ -170,6 +171,11 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def build_train_loader(cls, cfg):
+        if cfg.INPUT.DATASET_MAPPER_NAME == "care_semantic":
+            if cfg.SSL.TRAIN_SSL:
+                raise ValueError("CARE uses labeled supervision, not the SSL trainer")
+            mapper = CARESemanticDatasetMapper(cfg, True)
+            return build_detection_train_loader(cfg, mapper=mapper), None
         # Semantic segmentation dataset mapper
         if cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_semantic":
             mapper = MaskFormerSemanticDatasetMapper(cfg, True)
@@ -360,6 +366,21 @@ def setup(args):
     add_maskformer2_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+
+    care = cfg.MODEL.CARE
+    if care.ENABLED:
+        if cfg.SSL.TRAIN_SSL:
+            raise ValueError("CARE must run with SSL.TRAIN_SSL=False")
+        if cfg.INPUT.DATASET_MAPPER_NAME != "care_semantic":
+            raise ValueError("CARE requires INPUT.DATASET_MAPPER_NAME=care_semantic")
+        if not str(care.FEATURE_NAME):
+            raise ValueError("CARE.FEATURE_NAME must not be empty")
+        for filename in ("manifest.json", "feature_bank.npz"):
+            path = os.path.join(str(care.BANK_DIR), filename)
+            if not os.path.isfile(path):
+                raise FileNotFoundError("CARE bank artifact not found: {}".format(path))
+    elif cfg.INPUT.DATASET_MAPPER_NAME == "care_semantic":
+        raise ValueError("care_semantic mapper requires MODEL.CARE.ENABLED=True")
 
     if (
         cfg.MODEL.TOPOWHEAT.TCPM.ENABLED

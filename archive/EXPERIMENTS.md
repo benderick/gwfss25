@@ -11,6 +11,11 @@ The fixed Stage I result for current TopoWheat comparisons is validation mIoU
 `73.10942` and competition-test mIoU `69.4389`. Checkpoints and hyperparameters
 must be selected on validation; the test result is a locked final comparison.
 
+The former TRPL--TCPM--BAZR stack has failed its matched full-validation audits
+and is quarantined. Its configs remain only for reproduction and diagnosis; do
+not treat the rows or commands below as a recommendation for another training
+run. The replacement decision protocol is in `METHOD_REDESIGN.md`.
+
 ## 1. What is the baseline?
 
 The paper's baseline is BEiTv2-L + ViT-Adapter + Mask2Former with standard
@@ -41,7 +46,7 @@ copied from `maskformer2_R50_bs16_90k.yaml` is retained only as the common
 Mask2Former semantic-segmentation structure. Stage-specific settings are
 declared explicitly in
 `beit_adapter/maskformer2_beit_adapter_large_bas8_20k.yaml`, while the
-competition experiment files explicitly use a global batch of 2, 20,000
+Stage-I competition experiment files explicitly use a global batch of 4, 20,000
 iterations for Stage 1, validation-set evaluation, TTA off, and SSL off.
 This prevents the copied parent's effective defaults (batch 8, 15,000
 iterations, training-set evaluation, and TTA on) from silently controlling
