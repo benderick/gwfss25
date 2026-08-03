@@ -634,7 +634,10 @@ def main():
     per_image_rows = []
     worst_heap = []
 
-    with torch.inference_mode():
+    # Some supported PyTorch versions reject CPU reductions or accumulator
+    # updates on tensors created by inference_mode. no_grad keeps normal tensor
+    # semantics while still disabling autograd for the audit forward passes.
+    with torch.no_grad():
         for index, record in enumerate(records):
             (
                 resized_image,
