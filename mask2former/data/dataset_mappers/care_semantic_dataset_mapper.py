@@ -12,6 +12,7 @@ from torch.utils.data import get_worker_info
 from detectron2.config import configurable
 
 from data import DatasetCatalog
+from ...care_protocol import validate_bank_protocol
 
 from .mask_former_semantic_dataset_mapper import MaskFormerSemanticDatasetMapper
 
@@ -52,8 +53,7 @@ class CARESemanticDatasetMapper:
 
         with open(manifest_path, "r", encoding="utf-8") as handle:
             manifest = json.load(handle)
-        if int(manifest.get("bank_version", -1)) != 1:
-            raise ValueError("unsupported CARE bank version")
+        validate_bank_protocol(manifest)
         if manifest.get("phase0_verdict") != "care_phase0_supported":
             raise ValueError("CARE bank was not produced by a supported Phase-0 audit")
         if manifest.get("feature_name") != self.feature_name:

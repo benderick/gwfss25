@@ -8,7 +8,7 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 MODE="${MODE:-care}"
 NUM_GPUS="${NUM_GPUS:-1}"
 CHECKPOINT="${CHECKPOINT:-outputs/competition_baseline/model_best.pth}"
-BANK_DIR="${BANK_DIR:-outputs/care_phase1_bank}"
+BANK_DIR="${BANK_DIR:-outputs/care_phase1_bank_v2}"
 RESUME="${RESUME:-0}"
 
 cd "$ROOT_DIR"
@@ -16,11 +16,11 @@ cd "$ROOT_DIR"
 case "$MODE" in
     c0|control)
         CONFIG_FILE="${CONFIG_FILE:-configs/gwfss/experiments/competition_care_phase1_c0.yaml}"
-        OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_c0}"
+        OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_c0_v2}"
         ;;
     care|c1)
         CONFIG_FILE="${CONFIG_FILE:-configs/gwfss/experiments/competition_care_phase1.yaml}"
-        OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_c1}"
+        OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_c1_v2}"
         for path in "$BANK_DIR/manifest.json" "$BANK_DIR/feature_bank.npz"; do
             if [[ ! -f "$path" ]]; then
                 echo "CARE bank artifact not found: $path" >&2

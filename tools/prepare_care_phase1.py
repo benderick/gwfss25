@@ -23,6 +23,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from detectron2.modeling import build_model  # noqa: E402
 from detectron2.structures import ImageList  # noqa: E402
+from mask2former.care_protocol import (  # noqa: E402
+    CARE_BANK_VERSION,
+    validate_phase0_protocol,
+)
 
 
 AUDIT_PATH = REPO_ROOT / "tools/audit_care_phase0.py"
@@ -35,7 +39,7 @@ prepare_image = AUDIT_MODULE.prepare_image
 select_records = AUDIT_MODULE.select_records
 
 
-BANK_VERSION = 1
+BANK_VERSION = CARE_BANK_VERSION
 
 
 def parse_args():
@@ -359,6 +363,7 @@ def main():
     if missing:
         raise FileNotFoundError("missing Phase-0 artifact: {}".format(missing[0]))
     phase0 = read_json(phase0_paths["summary"])
+    runtime_calibration = validate_phase0_protocol(phase0)
     if phase0.get("verdict") != "care_phase0_supported":
         raise RuntimeError("Phase 0 did not support CARE")
     if not phase0.get("full_audit"):
@@ -407,11 +412,14 @@ def main():
         )
     channels = int(output_shapes[args.feature_name].channels)
 
+    phase0_hashes = {
+        name: sha256_file(path) for name, path in phase0_paths.items()
+    }
     provenance = {
         "bank_version": BANK_VERSION,
-        "phase0_hashes": {
-            name: sha256_file(path) for name, path in phase0_paths.items()
-        },
+        "phase0_audit_version": int(phase0["audit_version"]),
+        "runtime_calibration": runtime_calibration,
+        "phase0_hashes": phase0_hashes,
         "config_file": str(Path(args.config_file).resolve()),
         "checkpoint": checkpoint_identity(args.checkpoint),
         "loaded_checkpoint_branch": checkpoint_info["loaded_branch"],
@@ -506,8 +514,11 @@ def main():
         )
     manifest = {
         "bank_version": BANK_VERSION,
+        "phase0_audit_version": int(phase0["audit_version"]),
         "phase0_verdict": phase0["verdict"],
         "descriptor_version": phase0["descriptor_version"],
+        "runtime_calibration": runtime_calibration,
+        "phase0_artifact_hashes": phase0_hashes,
         "feature_name": args.feature_name,
         "channels": channels,
         "checkpoint_branch": checkpoint_info["loaded_branch"],
@@ -525,6 +536,13 @@ def main():
 
     elapsed = time.time() - started
     print("\nCARE Phase-1 bank complete", flush=True)
+    print(
+        "  protocol: Phase-0 v{} / {}".format(
+            manifest["phase0_audit_version"],
+            runtime_calibration["source"],
+        ),
+        flush=True,
+    )
     print(
         "  supported anchors / pairs / donors: {} / {} / {}".format(
             manifest["supported_anchor_count"],

@@ -36,9 +36,13 @@ from detectron2.data import transforms as T  # noqa: E402
 from detectron2.modeling import build_model  # noqa: E402
 from detectron2.projects.deeplab import add_deeplab_config  # noqa: E402
 from mask2former import add_maskformer2_config  # noqa: E402
+from mask2former.care_protocol import (  # noqa: E402
+    PHASE0_AUDIT_VERSION,
+    calibrate_training_anchor_compatibility,
+)
 
 
-AUDIT_VERSION = 1
+AUDIT_VERSION = PHASE0_AUDIT_VERSION
 DESCRIPTOR_VERSION = "soft_raw_spatial_moments_p2_v1"
 MOMENT_NAMES = ("mass", "x", "y", "xx", "xy", "yy")
 STYLE_NAMES = (
@@ -725,8 +729,11 @@ def validate_signature_retrieval(rows, teacher_signatures, gt_signatures, args):
         ),
         "gt_distance_reduction_vs_random": reduction,
         "reduction_bootstrap": interval,
-        "teacher_nn_distance_median": float(np.median(teacher_nn)),
-        "teacher_nn_distance_q75": float(np.quantile(teacher_nn, 0.75)),
+        "purpose": "descriptor_validation_only",
+        "diagnostic_teacher_nn_distance_median": float(np.median(teacher_nn)),
+        "diagnostic_teacher_nn_distance_q75": float(
+            np.quantile(teacher_nn, 0.75)
+        ),
         "criterion_minimum_reduction": MIN_GT_RETRIEVAL_REDUCTION,
         "gate_passed": bool(gate_passed),
     }
@@ -757,9 +764,12 @@ def audit_donor_support(
     donor_signatures,
     anchor_styles,
     donor_styles,
-    compatibility_threshold,
+    runtime_calibration,
     args,
 ):
+    compatibility_threshold = float(
+        runtime_calibration["compatibility_threshold"]
+    )
     anchor_domains = np.asarray(
         [row["domain_id"] for row in anchor_rows],
         dtype=np.int64,
@@ -955,7 +965,8 @@ def audit_donor_support(
         "random_expected_distance_mean": float(anchor_random.mean()),
         "distance_reduction_vs_random": reduction,
         "reduction_bootstrap": interval,
-        "compatibility_reference_q75": float(compatibility_threshold),
+        "compatibility_threshold": float(compatibility_threshold),
+        "compatibility_calibration_source": runtime_calibration["source"],
         "broad_support_fraction": broad_support_fraction,
         "criterion_minimum_broad_support_fraction": (
             MIN_BROAD_SUPPORT_FRACTION
@@ -1447,9 +1458,11 @@ def main():
         validation_gt_signatures,
         args,
     )
-    compatibility_threshold = signature_validation[
-        "teacher_nn_distance_q75"
-    ]
+    runtime_calibration = calibrate_training_anchor_compatibility(
+        anchor_rows,
+        anchor_signatures,
+        args.anchor_dataset,
+    )
     (
         donor_match_rows,
         anchor_support_rows,
@@ -1462,7 +1475,7 @@ def main():
         donor_signatures,
         anchor_styles,
         donor_styles,
-        compatibility_threshold,
+        runtime_calibration,
         args,
     )
 
@@ -1556,6 +1569,7 @@ def main():
         },
         "validation_inference": validation_metrics,
         "signature_validation": signature_validation,
+        "runtime_calibration": runtime_calibration,
         "donor_support": donor_support,
         "domain_support": domain_support_rows,
         "decision_criteria": {
@@ -1563,8 +1577,8 @@ def main():
             "minimum_donor_distance_reduction": MIN_DONOR_DISTANCE_REDUCTION,
             "minimum_broad_support_fraction": MIN_BROAD_SUPPORT_FRACTION,
             "broad_support_definition": (
-                "nearest donor falls within validation cross-domain NN Q75 "
-                "for at least half of eligible donor domains"
+                "nearest donor falls within the training-anchor frozen-teacher "
+                "cross-domain NN Q75 for at least half of eligible donor domains"
             ),
         },
         "gates": {
@@ -1611,6 +1625,12 @@ def main():
             signature_validation["gt_distance_reduction_vs_random"],
             signature_validation["reduction_bootstrap"]["lower_95"],
             signature_validation["reduction_bootstrap"]["upper_95"],
+        ),
+        flush=True,
+    )
+    print(
+        "  runtime cutoff (training-side only, anchor NN Q75): {:.6f}".format(
+            runtime_calibration["compatibility_threshold"]
         ),
         flush=True,
     )

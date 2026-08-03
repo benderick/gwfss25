@@ -8,7 +8,7 @@ export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 
 CONFIG_FILE="${CONFIG_FILE:-configs/gwfss/experiments/competition_baseline.yaml}"
 CHECKPOINT="${CHECKPOINT:-outputs/competition_baseline/model_best.pth}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase0}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase0_v2}"
 ANCHOR_DATASET="${ANCHOR_DATASET:-gwfss_sem_seg_train}"
 VALIDATION_DATASET="${VALIDATION_DATASET:-gwfss_sem_seg_val}"
 DONOR_DATASET="${DONOR_DATASET:-gwfss_unlabel_random4500_seed2025}"

@@ -34,34 +34,53 @@ strength, or layer search.
 
 Phase 0 fixes all selection behavior:
 
-- Only the 84 anchors with compatible donors in at least half of the other
+- Only the 89 anchors with compatible donors in at least half of the other
   acquisition domains are eligible.
 - Each eligible anchor samples uniformly from its Phase-0-compatible domains.
 - The Phase-0 Gaussian compatibility weight controls the interpolation amount.
-- The other 15 anchors remain bitwise identical to ordinary supervised input at
+- The other 10 anchors remain bitwise identical to ordinary supervised input at
   the intervention point.
+
+The runtime compatibility cutoff is calibrated from frozen-teacher descriptors
+of the 99 training anchors after robust standardization on the unlabeled donor
+pool. These are all training-side assets. Validation images and masks are used
+for a separate go/no-go descriptor-validity audit; they never enter the runtime
+cutoff, donor selection, or bank values. Phase-0 v1 and bank v1 are rejected by
+code.
 
 ## Prepare The Bank
 
-Run this once on the local machine with the `gwfss` environment active:
+Generate Phase 0 and the bank on the machine that will train C0/C1, from that
+machine's Stage-I checkpoint and dataset. Do not copy the existing local bank.
 
 ```bash
+conda activate gwfss
+cd /path/to/gwfss25
+
+CHECKPOINT=outputs/competition_baseline/model_best.pth \
+OUTPUT_DIR=outputs/care_phase0_v2 \
+bash care_phase0.sh
+
+CHECKPOINT=outputs/competition_baseline/model_best.pth \
+PHASE0_DIR=outputs/care_phase0_v2 \
+OUTPUT_DIR=outputs/care_phase1_bank_v2 \
 bash care_prepare_phase1.sh
 ```
 
-The expected structural counts are 84 supported anchors, 619 compatible pairs,
-495 unique donors, and 1024 `res2` channels. The script is resumable and also
+With the locked Stage-I checkpoint and current data, the expected structural
+counts are 89 supported anchors, 662 compatible pairs, 522 unique donors, and
+1024 `res2` channels. The script is resumable and also
 reports the implied target-to-anchor standard-deviation ratios before any
 training is authorized.
 
-The portable artifacts needed on the training server are:
+The remote machine creates and consumes:
 
 ```text
-outputs/care_phase1_bank/manifest.json
-outputs/care_phase1_bank/feature_bank.npz
+outputs/care_phase1_bank_v2/manifest.json
+outputs/care_phase1_bank_v2/feature_bank.npz
 ```
 
-Absolute local image paths are not stored in the runtime mapping.
+Do not substitute files from `outputs/care_phase1_bank` or any other v1 bank.
 
 ## Short Controlled Runs
 
@@ -70,13 +89,23 @@ state, learning rate `1e-5`, batch size inherited from Stage I, seed 2025, and
 2500 iterations. Do not pass `RESUME=1` on the first launch.
 
 ```bash
-MODE=c0 bash care_phase1_train.sh
-MODE=care bash care_phase1_train.sh
+MODE=c0 \
+CHECKPOINT=outputs/competition_baseline/model_best.pth \
+OUTPUT_DIR=outputs/care_phase1_c0_v2 \
+RESUME=0 \
+bash care_phase1_train.sh
+
+MODE=care \
+CHECKPOINT=outputs/competition_baseline/model_best.pth \
+BANK_DIR=outputs/care_phase1_bank_v2 \
+OUTPUT_DIR=outputs/care_phase1_c1_v2 \
+RESUME=0 \
+bash care_phase1_train.sh
 ```
 
 C0 is mandatory: it measures the benefit or damage caused by another 2500
 supervised updates. C1 differs only by CARE. Validation runs at 1000, 2000, and
-the final 2500 iterations.
+the final 2500 iterations. C1 starts from Stage I, not from the C0 checkpoint.
 
 ## Decision Rule
 

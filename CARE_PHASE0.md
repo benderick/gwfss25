@@ -20,7 +20,9 @@ not a resolution assumption in the method.
 
 - `gwfss_sem_seg_train`: the 99 labeled anchors that would be used by CARE.
 - `gwfss_sem_seg_val`: an out-of-sample descriptor validation set. Its masks are
-  consulted only after retrieval.
+  consulted only after retrieval for a go/no-go falsification audit. Neither
+  its images nor masks enter the runtime cutoff, donor selection, or bank
+  values.
 - `gwfss_unlabel_random4500_seed2025`: a deterministic, domain-balanced random
   sample of 500 unlabeled images per source institution.
 
@@ -38,10 +40,11 @@ an inherited task-aware sampling rule.
    cross-domain retrieval. The paired bootstrap lower bound must be positive.
 3. **Cross-domain donor support.** Matching must reduce teacher-signature
    distance by at least `30%`, and at least `80%` of anchors must have compatible
-   donors in at least half of the eligible source domains. Compatibility is
-   defined from the validation set, not hand-tuned: the donor distance must be
-   no larger than the 75th percentile of validation cross-domain nearest-neighbor
-   distances.
+   donors in at least half of the eligible source domains. The compatibility
+   cutoff is the 75th percentile of cross-domain nearest-neighbor distances
+   among the 99 training anchors, using frozen-teacher descriptors standardized
+   by robust statistics from the unlabeled donor pool. These are training-side
+   assets; calibration uses no validation image and no ground-truth mask.
 
 Only a full run that passes all three gates returns
 `care_phase0_supported`. A limited run always returns `smoke_only`.
@@ -56,8 +59,8 @@ bash care_phase0.sh
 ```
 
 The default run processes 99 anchors, 99 validation images, and 4,500 donors.
-Descriptor rows are appended to `outputs/care_phase0/cache`; rerunning the same
-command resumes an interrupted extraction.
+Descriptor rows are appended to `outputs/care_phase0_v2/cache`; rerunning the
+same command resumes an interrupted extraction.
 
 For a quick pipeline smoke test in a fresh output directory:
 
@@ -66,13 +69,17 @@ MAX_ANCHORS=10 \
 MAX_VALIDATION=10 \
 MAX_DONORS=90 \
 VISUALIZE=2 \
-OUTPUT_DIR=outputs/care_phase0_smoke \
+OUTPUT_DIR=outputs/care_phase0_v2_smoke \
 bash care_phase0.sh
 ```
 
 If cache-producing settings change, use a new output directory. To explicitly
 discard only the audit cache in the selected output directory, set
 `RECOMPUTE_CACHE=1`.
+
+Phase-0 v1 used a validation-derived runtime cutoff and is intentionally
+incompatible with the current bank builder. Regenerate Phase 0 instead of
+reusing or renaming an old output directory.
 
 ## Artifacts
 
@@ -88,4 +95,4 @@ discard only the audit cache in the selected output directory, set
   donors for visual inspection.
 
 Return the terminal summary and `summary.json`. If the verdict is negative, do
-not start Stage I of CARE training.
+not start CARE Phase 1 training.

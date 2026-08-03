@@ -7,8 +7,8 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 CONFIG_FILE="${CONFIG_FILE:-configs/gwfss/experiments/competition_baseline.yaml}"
 CHECKPOINT="${CHECKPOINT:-outputs/competition_baseline/model_best.pth}"
-PHASE0_DIR="${PHASE0_DIR:-outputs/care_phase0}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_bank}"
+PHASE0_DIR="${PHASE0_DIR:-outputs/care_phase0_v2}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/care_phase1_bank_v2}"
 DEVICE="${DEVICE:-cuda}"
 FEATURE_NAME="${FEATURE_NAME:-res2}"
 

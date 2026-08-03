@@ -6,5 +6,5 @@ INPUT:
 MODEL:
   CARE:
     ENABLED: True
-    BANK_DIR: "outputs/care_phase1_bank"
+    BANK_DIR: "outputs/care_phase1_bank_v2"
     FEATURE_NAME: "res2"
