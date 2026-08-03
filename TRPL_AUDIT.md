@@ -75,8 +75,8 @@ The two predeclared mechanism gates in `summary.json` are:
 - reliability must improve stem precision by at least 0.03 over the
   class-matched confidence selector;
 - stable multi-view skeleton precision must improve by at least 0.03 over the
-  ordinary teacher stem skeleton while retaining at least 0.10 skeleton
-  sensitivity.
+  same-size subset of the teacher skeleton selected by confidence, must not
+  reduce clDice, and must retain at least 0.10 skeleton sensitivity.
 
 These gates diagnose whether the current mechanism adds information beyond
 confidence. They are not a replacement for a controlled training ablation.

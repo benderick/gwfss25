@@ -34,6 +34,7 @@ from mask2former.topowheat.audit import (  # noqa: E402
     SelectiveSegmentationAccumulator,
     TopologyAlignmentAccumulator,
     binary_dilate,
+    matched_topk_mask,
     matched_topk_mask_by_class,
 )
 from mask2former.topowheat.topology import hard_skeletonize  # noqa: E402
@@ -608,6 +609,9 @@ def main():
         "teacher_stem_skeleton": TopologyAlignmentAccumulator(
             args.topology_tolerance
         ),
+        "confidence_matched_teacher_skeleton": TopologyAlignmentAccumulator(
+            args.topology_tolerance
+        ),
         "stable_multiview_skeleton": TopologyAlignmentAccumulator(
             args.topology_tolerance
         ),
@@ -753,8 +757,19 @@ def main():
             teacher_skeleton = hard_skeletonize(
                 predicted_stem.to(model.device)[None, None],
             ).squeeze(0).squeeze(0).cpu()
+            stable_skeleton = stable_skeleton.bool() & valid
+            confidence_matched_skeleton = matched_topk_mask(
+                confidence,
+                stable_skeleton,
+                teacher_skeleton,
+            )
             topology["teacher_stem_skeleton"].update(
                 teacher_skeleton,
+                target_stem,
+                target_skeleton,
+            )
+            topology["confidence_matched_teacher_skeleton"].update(
+                confidence_matched_skeleton,
                 target_stem,
                 target_skeleton,
             )
@@ -885,11 +900,15 @@ def main():
     trpl_stem = trpl_summary["per_class"][stem_name]
     matched_stem = matched_summary["per_class"][stem_name]
     teacher_topology = topology_summaries["teacher_stem_skeleton"]
+    matched_topology = topology_summaries[
+        "confidence_matched_teacher_skeleton"
+    ]
     stable_topology = topology_summaries["stable_multiview_skeleton"]
     evidence = {
         "criteria": {
             "minimum_precision_gain": 0.03,
             "minimum_stable_skeleton_sensitivity": 0.10,
+            "minimum_cldice_gain": 0.0,
         },
         "overall_accuracy_gain_vs_class_matched_confidence": safe_delta(
             trpl_summary["accepted_accuracy"],
@@ -910,12 +929,23 @@ def main():
             stable_topology["precision"],
             teacher_topology["precision"],
         ),
+        "stable_skeleton_precision_gain_vs_matched_confidence": safe_delta(
+            stable_topology["precision"],
+            matched_topology["precision"],
+        ),
+        "stable_skeleton_cldice_gain_vs_matched_confidence": safe_delta(
+            stable_topology["cldice"],
+            matched_topology["cldice"],
+        ),
     }
     reliability_gain = evidence[
         "stem_precision_gain_vs_class_matched_confidence"
     ]
     skeleton_gain = evidence[
-        "stable_skeleton_precision_gain_vs_teacher_skeleton"
+        "stable_skeleton_precision_gain_vs_matched_confidence"
+    ]
+    skeleton_cldice_gain = evidence[
+        "stable_skeleton_cldice_gain_vs_matched_confidence"
     ]
     reliability_gate = (
         reliability_gain is not None and reliability_gain >= 0.03
@@ -923,12 +953,18 @@ def main():
     topology_gate = (
         skeleton_gain is not None
         and skeleton_gain >= 0.03
+        and skeleton_cldice_gain is not None
+        and skeleton_cldice_gain >= 0.0
         and stable_topology["sensitivity"] is not None
         and stable_topology["sensitivity"] >= 0.10
     )
     evidence["reliability_gate_passed"] = reliability_gate
     evidence["topology_gate_passed"] = topology_gate
-    if reliability_gain is None or skeleton_gain is None:
+    if (
+        reliability_gain is None
+        or skeleton_gain is None
+        or skeleton_cldice_gain is None
+    ):
         evidence["verdict"] = "inconclusive_insufficient_stem_evidence"
     elif reliability_gate and topology_gate:
         evidence["verdict"] = "mechanistic_signal_present"
@@ -951,7 +987,7 @@ def main():
         **disagreement_totals,
     }
     summary = {
-        "audit_version": 1,
+        "audit_version": 2,
         "dataset": args.dataset,
         "images": len(records),
         "config_file": str(Path(args.config_file).resolve()),
@@ -1048,7 +1084,7 @@ def main():
         )
     )
     print(
-        "  stable-skeleton precision gain: {}".format(
+        "  stable-skeleton precision gain vs matched confidence: {}".format(
             format_metric(skeleton_gain)
         )
     )
